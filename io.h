@@ -15,11 +15,13 @@
 #include <netdb.h>
 #include <err.h>
 
+#define USE_PARAMS (1 << 0)
+#define USE_MEM (1 << 1)
 
 struct io_ctx {
    int entries;
 
-   int init_opt;
+   int init_opts;
    struct io_uring_params params;
 
    /* use_mem used to set init_mem
@@ -50,9 +52,9 @@ struct io {
 int io_init(struct io *io, const struct io_ctx *ctx) {
    int ret;
 
-   if (ctx->init_opt == 1) {
+   if (ctx->init_opts & USE_PARAMS) {
       errx(1, "Not implemented.\n");
-   } else if (ctx->init_opt == 2) {
+   } else if (ctx->init_opts & USE_MEM) {
       ret = io_uring_queue_init_mem(ctx->entries, &(io->ring), &(ctx->params), &(ctx->buf), ctx->buf_size);
       if (ret) {
          errx(1, "io_uring_queue_init_mem\n");
