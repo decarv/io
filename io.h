@@ -1,5 +1,8 @@
 /* io.h
  * Copyright (C) 2024 Henrique de Carvalho <decarv.henrique@gmail.com>
+ *
+ * This code is based on: https://git.kernel.dk/cgit/liburing/tree/examples/proxy.c
+ * (C) 2024 Jens Axboe <axboe@kernel.dk>
  */
 
 #include <sys/eventfd.h>
