@@ -6,7 +6,6 @@
 int main(int argc, char** argv)
 {
    int ret;
-   int *listening_socket_p;
 
    ret = io_context_setup();
    if (ret)
@@ -22,8 +21,8 @@ int main(int argc, char** argv)
       return 1;
    }
 
-   listening_socket_p = &io_ctx->main_io->in_fd;
-   prepare_listening_socket(listening_socket_p);
+   prepare_in_socket(io_ctx->main_io);
+   prepare_out_socket(io_ctx->main_io);
 
    io_start();
 
