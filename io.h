@@ -28,7 +28,7 @@
 
 #define ALIGNMENT sysconf(_SC_PAGESIZE)
 /* BUFFER_SIZE == 4k */
-#define BUFFER_SIZE (1 << 12)
+#define BUFFER_SIZE (1 << 32)
 #define BUFFER_POOL_SIZE 4
 
 #define CONNECTIONS 100
@@ -59,14 +59,14 @@ struct io_context
 
    struct io_connection *main_io;
 
-   atomic_int current_bgid;
+//   atomic_int current_bgid;
    int (*handlers[MAX_HANDLERS])(struct io_context *, struct io_connection *, struct io_uring_cqe *);
 };
 
 struct io_connection_buf_ring {
     struct io_uring_buf_ring *br;
     void *buf;
-    int bgid;
+//    int bgid;
 };
 
 struct io_connection {
@@ -85,8 +85,12 @@ struct io_connection {
    struct iovec *iovecs;
 
    /* buffer ring */
-   struct io_connection_buf_ring in_br;
-   struct io_connection_buf_ring out_br;
+   int bid;
+   int in_bid;
+   int out_bid;
+   struct io_connection_buf_ring br;
+//   struct io_connection_buf_ring in_br;
+//   struct io_connection_buf_ring out_br;
 
    int (*handlers[MAX_HANDLERS])(struct io_context *, struct io_connection *, struct io_uring_cqe *);
 };
@@ -95,8 +99,8 @@ struct user_data {
     union {
         struct {
             uint8_t op;
-            uint16_t id;
-            uint16_t buffer_id;
+            uint16_t id;  /* connection id */
+            uint16_t bid; /* buffer index */
             uint16_t fd;
             uint8_t __rsv;
         };
@@ -108,6 +112,8 @@ struct user_data {
 
 struct io_connection*
 io_cqe_to_connection(struct io_uring_cqe *cqe);
+int
+io_cqe_to_bid(struct io_uring_cqe *cqe);
 int
 io_prepare_accept(struct io_connection *io);
 int
@@ -134,6 +140,8 @@ int
 io_setup_send_ring(struct io_connection *io);
 int
 io_setup_buffer_rings(struct io_connection *io);
+int
+io_setup_buffer_ring(struct io_connection *io);
 
 
 /* Constants Declarations */
@@ -155,6 +163,9 @@ enum {
     ACCEPT  = 1,
     RECEIVE = 2,
     SEND    = 3,
+    CONNECT = 4,
+    SOCKET  = 5,
+    /* TODO: ADD SIGNALS */
 };
 
 int (*handlers[])(struct io_connection *, struct io_uring_cqe *) =
@@ -261,12 +272,12 @@ io_cqe_to_connection(struct io_uring_cqe *cqe)
 }
 
 void
-io_encode_data(struct io_uring_sqe *sqe, uint8_t op, uint16_t id, uint16_t buffer_id, uint16_t fd)
+io_encode_data(struct io_uring_sqe *sqe, uint8_t op, uint16_t id, uint16_t bid, uint16_t fd)
 {
    struct user_data ud = {
            .op = op,
            .id = id,
-           .buffer_id = buffer_id,
+           .bid = bid,
            .fd = fd,
            .__rsv = 0,
    };
@@ -287,21 +298,34 @@ io_decode_op(struct io_uring_cqe *cqe)
    return ud.op;
 }
 
+int
+io_cqe_to_bid(struct io_uring_cqe *cqe)
+{
+   struct user_data ud = { .as_u64 = cqe->user_data };
+   return ud.bid;
+}
 
+/**
+ * Handles accept from cqe main_io then prepares a receive.
+ * @param io
+ * @param cqe
+ * @return
+ */
 int
 io_handle_accept(struct io_connection *io, struct io_uring_cqe *cqe)
 {
+   struct user_data ud;
    struct io_connection **io_p = &io;
    pid_t pid;
    /* child */
    pid = fork();
    if (!pid)
    {
-      io_connection_init(io_p);
-      io->out_fd = cqe->res;
-      io->in_fd = cqe->res;  /* TODO: if its supposed to act as a proxy, than this should be changed */
-      io_prepare_receive(io);
-      io_loop(io);
+      struct io_connection *child_io;
+      io_connection_init(&child_io);
+      io->in_fd = cqe->res;  /* when acting as a client */
+      io_prepare_receive(child_io);
+      io_loop(child_io);
    }
    else
    {
@@ -311,8 +335,34 @@ io_handle_accept(struct io_connection *io, struct io_uring_cqe *cqe)
 }
 
 int
+io_handle_connect(struct io_connection *io, struct io_uring_cqe *cqe)
+{
+   struct io_connection **io_p = &io;
+   io->out_fd = cqe->res;  /* when acting as a server */
+   return 0;
+}
+
+int
 io_handle_receive(struct io_connection *io, struct io_uring_cqe *cqe)
 {
+   int bid, nr_packets;
+   int pending_recv = 0;
+
+   if (!(cqe->flags & IORING_CQE_F_BUFFER)) {
+      pending_recv = 0;
+
+      if (!(cqe->res)) {
+         fprintf(stderr, "no buffer assigned, res=%d\n", cqe->res);
+         return 1;
+      }
+   }
+
+   bid = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
+
+//   nr_packets = recv_bids(c, ocd, &bid, cqe->res);
+
+   printf("%s\n", (char *) (io->br.buf));
+
    printf("cqe->res: %d\n", cqe->res);
    io_prepare_send(io);
    return 0;
@@ -333,7 +383,6 @@ io_handle_cqe(struct io_connection *io, struct io_uring_cqe *cqe)
 
    int op = io_decode_op(cqe);
 
-   /* TODO: Inspect array out of bounds */
    handler = handlers[op];
    ret = handler(io, cqe);
    if (ret)
@@ -360,7 +409,7 @@ io_connection_init(struct io_connection **io)
    ret = io_uring_queue_init_params(io_ctx->entries, &(*io)->ring, &io_ctx->params);
    if (ret)
    {
-      fprintf(stderr, "%s\n", strerror(-ret));
+      fprintf(stderr, "io_connection_init: %s\n", strerror(-ret));
       return 1;
    }
 
@@ -375,7 +424,7 @@ io_connection_init(struct io_connection **io)
       }
    }
 
-   io_setup_buffer_rings(io);
+   io_setup_buffer_rings(*io);
 
    return 0;
 }
@@ -435,7 +484,7 @@ io_context_setup()
 
    if (!(io_ctx)->br_count)
    {
-      (io_ctx)->br_count = (1 << 10);
+      (io_ctx)->br_count = (1 << 1);
    }
 
    if (!(io_ctx)->buffer_ring_size)
@@ -476,35 +525,57 @@ io_prepare_accept(struct io_connection *io)
 {
    struct io_uring_sqe *sqe = io_get_sqe(&io->ring);
 
-   io_encode_data(sqe, ACCEPT, io->id, io->in_br.bgid, io->in_fd);
+   io_encode_data(sqe, ACCEPT, io->id, io->bid, io->in_fd);
 
    io_uring_prep_multishot_accept(sqe, io->in_fd, NULL, NULL, 0);
 
    return 0;
 }
 
+void
+next_bid(int *bid)
+{
+   *bid = ( *bid + 1 ) % io_ctx->br_count;
+}
+
 int
 io_prepare_receive(struct io_connection *io)
 {
+   int ret;
    struct io_uring_sqe *sqe = io_get_sqe(&io->ring);
+//   next_bid(&io->bid);
 
-   io_encode_data(sqe, RECEIVE, io->id, io->bid, io->out_fd);
+   io_uring_prep_recv_multishot(sqe,
+                                io->in_fd,
+                                NULL,
+                                0,
+                                0);
 
-   sqe->buf_index = io->in_br.bgid;
+   io_encode_data(sqe,
+                  RECEIVE,
+                  io->id,
+                  0,
+                  io->in_fd);
+
    sqe->flags |= IOSQE_BUFFER_SELECT;
-   io_uring_prep_recv_multishot(sqe, io->out_fd, NULL, 0, 0);
+   sqe->buf_group = 0;
+
+   io_uring_submit(&io->ring);
 
    return 0;
 }
+
 
 int
 io_prepare_send(struct io_connection *io)
 {
    struct io_uring_sqe *sqe = io_get_sqe(&io->ring);
 
-   io_encode_data(sqe, SEND, io->id, io->buffer_id, io->in_fd);
+   io_encode_data(sqe, SEND, io->id, 0, io->out_fd);
 
-   io_uring_prep_send(sqe, io->in_fd, &io->out_br, io_ctx->br_size, 0);
+   io_uring_prep_send(sqe, io->in_fd, &io->br, io_ctx->br_size, 0);
+
+//   next_bid(&io->bid);
 
    return 0;
 }
@@ -524,9 +595,9 @@ io_start()
 int
 io_loop(struct io_connection *io) {
    struct __kernel_timespec active_ts, idle_ts;
+   int events;
    int flags;
    static int wait_usec = 1000000;
-
    idle_ts.tv_sec = 0;
    idle_ts.tv_nsec = 100000000LL;
    active_ts = idle_ts;
@@ -560,7 +631,7 @@ io_loop(struct io_connection *io) {
          exit(1);
       }
 
-      i = 0;
+      events = 0;
       io_uring_for_each_cqe(&(io->ring), head, cqe)
       {
          printf("%d\n", cqe->res);
@@ -584,101 +655,63 @@ io_loop(struct io_connection *io) {
    return 0;
 }
 
-int
-io_recv_ring_setup(struct io_connection *io)
-{
-   struct io_connection_buf_ring *cbr = &io->in_br;
-   int ret, i;
-   size_t len;
-   void *ptr;
-
-   len = io_ctx->br_size * io_ctx->br_count;
-   if (posix_memalign(&cbr->buf, sysconf(_SC_PAGESIZE), len))
-   {
-      perror("posix memalign");
-      return 1;
-   }
-
-   cbr->br = io_uring_setup_buf_ring(&io->ring, io_ctx->br_count, cbr->bgid, 0, &ret);
-   if (!cbr->br)
-   {
-      fprintf(stderr, "Buffer ring register failed %d\n", ret);
-      return 1;
-   }
-
-   ptr = cbr->buf;
-   for (i = 0; i < io_ctx->br_count; i++) {
-      io_uring_buf_ring_add(cbr->br, ptr, io_ctx->br_count, i, (io_ctx->br_count - 1), i);
-      ptr += io_ctx->br_size;
-   }
-   io_uring_buf_ring_advance(cbr->br, io_ctx->br_count);
-
-   return 0;
-}
-
-int
-io_setup_send_ring(struct io_connection *io)
-{
-   struct io_connection_buf_ring *cbr = &io->out_br;
-   int ret;
-
-   cbr->br = io_uring_setup_buf_ring(&io->ring, io_ctx->br_count, cbr->bgid, 0, &ret);
-   if (!cbr->br) {
-      fprintf(stderr, "Buffer ring register failed %d\n", ret);
-      return 1;
-   }
-
-   return 0;
-}
-
 /**
  * TODO: Assess the best size of the buffer rings
  * based on empty buffer rings and consumption speed.
  */
 int
-io_setup_buffer_ring(struct io_connection_buf_ring *cbr);
-int
 io_setup_buffer_rings(struct io_connection *io)
 {
    int ret;
-   ret = io_setup_buffer_ring(&io->in_br);
-   ret &= io_setup_buffer_ring(&io->out_br);
+   ret = io_setup_buffer_ring(io);
+//   ret = io_setup_buffer_ring(&io->in_br);
+//   ret &= io_setup_buffer_ring(&io->out_br);
+   io->bid = 0;
+   io->in_bid = 0; /* unused */
+   io->out_bid = 0; /* unused */
    return ret;
 }
 
 int
-io_setup_buffer_ring(struct io_connection_buf_ring *cbr)
+io_setup_buffer_ring(struct io_connection *io)
 {
    int ret;
-   void *br_ptr;
+   struct io_connection_buf_ring *cbr = &io->br;
 
-   cbr->bgid = io_ctx->current_bgid++;
-
-   if (posix_memalign(&cbr->buf, sysconf(_SC_PAGESIZE),
-                      io_ctx->br_size * io_ctx->br_count))
+   if (posix_memalign(&cbr->buf, 4096,
+                      io_ctx->br_size * 2))
    {
       perror("io_setup_buffer_ring: posix_memalign");
       return 1;
    }
-
-   cbr->br = io_uring_setup_buf_ring(&io->ring, io_ctx->br_count, cbr->bgid, 0, &ret);
+//
+//
+//   br_ptr = (void *) cbr->br;
+//   for (int bid = 0; bid < io_ctx->br_count; bid++) {
+//      /* Assign br_ptr with the addr/len/buffer_id supplied.
+//       * I will be able to retrieve this by bid after. */
+//      io_uring_buf_ring_add(br_ptr,
+//                            cbr->buf,
+//                            io_ctx->br_size,
+//                            bid,
+//                            io_ctx->br_mask,
+//                            bid);
+//      br_ptr += io_ctx->br_size;
+//   }
+//   io_uring_buf_ring_advance(cbr->br, io_ctx->br_count);
+   cbr->br = io_uring_setup_buf_ring(&io->ring, 2, 0, 0, &ret);
    if (!cbr->br)
    {
-      fprintf(stderr, "io_setup_buffer_ring: Buffer ring register failed %d\n", ret);
+      fprintf(stderr, "Buffer ring register failed %d\n", ret);
       return 1;
    }
 
-   br_ptr = (void *) cbr->br;
-   for (int bid = 0; bid < io_ctx->br_count; bid++) {
-      /* Assign br_ptr with the addr/len/buffer_id supplied.
-       * I will be able to retrieve this by bid after. */
-      io_uring_buf_ring_add(br_ptr,
-                            cbr->buf,
-                            io_ctx->br_size,
-                            bid,
-                            io_ctx->br_mask,
-                            bid);
-      br_ptr += io_ctx->br_size;
+   void* ptr = cbr->buf;
+   for (int i = 0; i < io_ctx->br_count; i++)
+   {
+      printf("add bid %d, data %p\n", i, ptr);
+      io_uring_buf_ring_add(cbr->br, ptr, io_ctx->br_size, i, io_ctx->br_mask, i);
+      ptr += io_ctx->br_size;
    }
    io_uring_buf_ring_advance(cbr->br, io_ctx->br_count);
 
