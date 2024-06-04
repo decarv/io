@@ -1,10 +1,6 @@
 /* io.h
  * Copyright (C) 2024 Henrique de Carvalho <decarv.henrique@gmail.com>
  *
- * TODO:
- *  - Dump the transfered bytes to console;
- *  - Connect to server
- *
  * This code is based on: https://git.kernel.dk/cgit/liburing/tree/examples/proxy.c
  * (C) 2024 Jens Axboe <axboe@kernel.dk>
  */
@@ -28,7 +24,7 @@
 
 #define ALIGNMENT sysconf(_SC_PAGESIZE)
 /* BUFFER_SIZE == 4k */
-#define BUFFER_SIZE (1 << 32)
+#define BUFFER_SIZE (1 << 12)
 #define BUFFER_POOL_SIZE 4
 
 #define CONNECTIONS 100
@@ -139,7 +135,7 @@ io_recv_ring_setup(struct io_connection *io);
 int
 io_setup_send_ring(struct io_connection *io);
 int
-io_setup_buffer_rings(struct io_connection *io);
+io_setup_buffers(struct io_connection *io);
 int
 io_setup_buffer_ring(struct io_connection *io);
 
@@ -314,16 +310,20 @@ io_cqe_to_bid(struct io_uring_cqe *cqe)
 int
 io_handle_accept(struct io_connection *io, struct io_uring_cqe *cqe)
 {
-   struct user_data ud;
-   struct io_connection **io_p = &io;
    pid_t pid;
    /* child */
    pid = fork();
    if (!pid)
    {
+      /*
+       * TODO
+       *  Like other multishot type requests, the application should look at the CQE flags and see if IORING_CQE_F_MORE
+       *  is set on completion as an indication of whether or not the accept request will generate further CQEs.
+       *  Ref.: https://man.archlinux.org/man/extra/liburing/io_uring_prep_multishot_accept.3.en
+       */
       struct io_connection *child_io;
       io_connection_init(&child_io);
-      io->in_fd = cqe->res;  /* when acting as a client */
+      child_io->in_fd = cqe->res;  /* when acting as a client */
       io_prepare_receive(child_io);
       io_loop(child_io);
    }
@@ -345,25 +345,86 @@ io_handle_connect(struct io_connection *io, struct io_uring_cqe *cqe)
 int
 io_handle_receive(struct io_connection *io, struct io_uring_cqe *cqe)
 {
-   int bid, nr_packets;
+   int nr_packets = 0;
    int pending_recv = 0;
+   struct io_connection_buf_ring *cbr = &io->br;
+   int in_bytes;
 
-   if (!(cqe->flags & IORING_CQE_F_BUFFER)) {
-      pending_recv = 0;
 
-      if (!(cqe->res)) {
-         fprintf(stderr, "no buffer assigned, res=%d\n", cqe->res);
-         return 1;
+      /*
+       * Not having a buffer attached should only happen if we get a zero
+       * sized receive, because the other end closed the connection. It
+       * cannot happen otherwise, as all our receives are using provided
+       * buffers and hence it's not possible to return a CQE with a non-zero
+       * result and not have a buffer attached.
+       */
+      printf("IORING_CQE_F_MORE: %d\n", cqe->flags & IORING_CQE_F_MORE);
+      if (!(cqe->flags & IORING_CQE_F_BUFFER)) {
+         pending_recv = 0;
+
+         if (!(cqe->res)) {
+            fprintf(stderr, "no buffer assigned, res=%d\n", cqe->res);
+            return 1;
+         }
       }
-   }
 
-   bid = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
+      struct io_uring_buf *buf;
+      in_bytes = cqe->res;
 
-//   nr_packets = recv_bids(c, ocd, &bid, cqe->res);
+      int nr_bufs = 2;
 
-   printf("%s\n", (char *) (io->br.buf));
+      int bid_val = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
+      int* bid = &bid_val;
+
+//      while (in_bytes) {
+//         struct io_uring_recvmsg_out *pdu;
+//         int this_bytes;
+//         void *data;
+//
+//         buf = &cbr->br->bufs[*bid];
+//
+//         /*
+//          * multishot recvmsg puts a header in front of the data - we
+//          * have to take that into account for the send setup, and
+//          * adjust the actual data read to not take this metadata into
+//          * account. For this use case, namelen and controllen will not
+//          * be set. If they were, they would need to be factored in too.
+//          */
+//         buf->len -= sizeof(struct io_uring_recvmsg_out);
+//         in_bytes -= sizeof(struct io_uring_recvmsg_out);
+//
+//         pdu = (void *) (unsigned long) buf->addr;
+//         printf("pdu namelen %d, controllen %d, payload %d flags %x\n",
+//              pdu->namelen, pdu->controllen, pdu->payloadlen,
+//              pdu->flags);
+//         data = (void *) (pdu + 1);
+//
+//         this_bytes = pdu->payloadlen;
+//         if (this_bytes > in_bytes)
+//            this_bytes = in_bytes;
+//
+//         in_bytes -= this_bytes;
+//
+//         if (1)
+//            io_uring_buf_ring_add(cbr->br, data, this_bytes, *bid,
+//                                  io_ctx->br_mask, nr_packets);
+////         else
+////            send_append(c, cd, data, *bid, this_bytes);
+//
+//         *bid = (*bid + 1) & (nr_bufs - 1);
+//         nr_packets++;
+//      }
+//
+//      io_uring_buf_ring_advance(cbr->br, nr_packets);
+
+
+   printf("Contents of io->br.buf[bid]: %s\n", (char *) (io->br.buf));
 
    printf("cqe->res: %d\n", cqe->res);
+   char buffer[1000];
+   recv(io->in_fd, buffer, 100, 0);
+   printf("Contents of buf: %s\n", buffer);
+
    io_prepare_send(io);
    return 0;
 }
@@ -424,7 +485,7 @@ io_connection_init(struct io_connection **io)
       }
    }
 
-   io_setup_buffer_rings(*io);
+   io_setup_buffers(*io);
 
    return 0;
 }
@@ -484,7 +545,7 @@ io_context_setup()
 
    if (!(io_ctx)->br_count)
    {
-      (io_ctx)->br_count = (1 << 1);
+      (io_ctx)->br_count = BUFFER_POOL_SIZE;
    }
 
    if (!(io_ctx)->buffer_ring_size)
@@ -543,6 +604,7 @@ io_prepare_receive(struct io_connection *io)
 {
    int ret;
    struct io_uring_sqe *sqe = io_get_sqe(&io->ring);
+   int bid = 0;
 //   next_bid(&io->bid);
 
    io_uring_prep_recv_multishot(sqe,
@@ -559,8 +621,6 @@ io_prepare_receive(struct io_connection *io)
 
    sqe->flags |= IOSQE_BUFFER_SELECT;
    sqe->buf_group = 0;
-
-   io_uring_submit(&io->ring);
 
    return 0;
 }
@@ -595,7 +655,6 @@ io_start()
 int
 io_loop(struct io_connection *io) {
    struct __kernel_timespec active_ts, idle_ts;
-   int events;
    int flags;
    static int wait_usec = 1000000;
    idle_ts.tv_sec = 0;
@@ -660,7 +719,7 @@ io_loop(struct io_connection *io) {
  * based on empty buffer rings and consumption speed.
  */
 int
-io_setup_buffer_rings(struct io_connection *io)
+io_setup_buffers(struct io_connection *io)
 {
    int ret;
    ret = io_setup_buffer_ring(io);
@@ -679,13 +738,13 @@ io_setup_buffer_ring(struct io_connection *io)
    struct io_connection_buf_ring *cbr = &io->br;
 
    if (posix_memalign(&cbr->buf, 4096,
-                      io_ctx->br_size * 2))
+                      io_ctx->br_size))
    {
       perror("io_setup_buffer_ring: posix_memalign");
       return 1;
    }
-//
-//
+
+//  TODO
 //   br_ptr = (void *) cbr->br;
 //   for (int bid = 0; bid < io_ctx->br_count; bid++) {
 //      /* Assign br_ptr with the addr/len/buffer_id supplied.
@@ -699,7 +758,8 @@ io_setup_buffer_ring(struct io_connection *io)
 //      br_ptr += io_ctx->br_size;
 //   }
 //   io_uring_buf_ring_advance(cbr->br, io_ctx->br_count);
-   cbr->br = io_uring_setup_buf_ring(&io->ring, 2, 0, 0, &ret);
+
+   cbr->br = io_uring_setup_buf_ring(&io->ring, io_ctx->br_count, 0, 0, &ret);
    if (!cbr->br)
    {
       fprintf(stderr, "Buffer ring register failed %d\n", ret);
