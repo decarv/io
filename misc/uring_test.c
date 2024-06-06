@@ -1,14 +1,14 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include "io.h"
+#include "../io.h"
 
 #define ALIGNMENT sysconf(_SC_PAGESIZE)
 
-int prepare_socket(int *sock_p)
+int prepare_in_socket(int *sock_p)
 {
    int ret = 0;
-   char *port = "8888";
+   char *port = "8889";
    struct addrinfo hints;
    struct addrinfo *res;
    memset(&hints, 0, sizeof(hints));
@@ -22,9 +22,15 @@ int prepare_socket(int *sock_p)
       return 1;
    }
 
-   if ((*sock_p = socket(res->ai_family, res->ai_socktype, res->ai_protocol | SO_REUSEADDR)) < 0) {
+   if ((*sock_p = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) < 0) {
       perror("socket\n");
       return 1;
+   }
+
+   int optval = 1;
+   if (setsockopt(*sock_p, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
+      perror("setsockopt");
+      exit(EXIT_FAILURE);
    }
 
    if ((ret = bind(*sock_p, res->ai_addr, res->ai_addrlen)) < 0) {
@@ -79,10 +85,10 @@ int main(int argc, char** argv)
    socklen_t in_addr_sz = sizeof(in_addr);
 
    struct io io = {0};
-   struct io_ctx ctx;
+   struct io_configuration ctx;
    struct io_uring_buf_reg reg = {0};
 
-   prepare_socket(&sock);
+   prepare_in_socket(&sock);
 
    struct io_uring_buf_ring buf_pool[BUFFER_SIZE];
 
@@ -141,10 +147,6 @@ int main(int argc, char** argv)
 
       io_uring_cqe_seen(&io.ring, cqe);
       printf("%s\n", io.buf);
-
-      if (!strcmp("exit", "exit")) {
-         break;
-      }
 
       sleep(1);
    }

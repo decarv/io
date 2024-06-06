@@ -1,3 +1,0 @@
-/home/decarv/projects/io/CMakeFiles/io.out.dir
-/home/decarv/projects/io/CMakeFiles/edit_cache.dir
-/home/decarv/projects/io/CMakeFiles/rebuild_cache.dir

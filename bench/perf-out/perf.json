@@ -1,0 +1,542 @@
+{
+  "counter-value": "25560.759898",
+  "unit": "msec",
+  "event": "task-clock",
+  "event-runtime": 25560759898,
+  "pcnt-running": 100,
+  "metric-value": "0.035497",
+  "metric-unit": "CPUs utilized",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "550642.000000",
+  "unit": "",
+  "event": "context-switches",
+  "event-runtime": 25560759898,
+  "pcnt-running": 100,
+  "metric-value": "21.542474",
+  "metric-unit": "K/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "2873.000000",
+  "unit": "",
+  "event": "cpu-migrations",
+  "event-runtime": 25560759898,
+  "pcnt-running": 100,
+  "metric-value": "112.398849",
+  "metric-unit": "/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "1265.000000",
+  "unit": "",
+  "event": "page-faults",
+  "event-runtime": 25560759898,
+  "pcnt-running": 100,
+  "metric-value": "49.489921",
+  "metric-unit": "/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "61093644976.000000",
+  "unit": "",
+  "event": "cycles",
+  "event-runtime": 10439519264,
+  "pcnt-running": 40,
+  "metric-value": "2.390134",
+  "metric-unit": "GHz",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "558657330.000000",
+  "unit": "",
+  "event": "stalled-cycles-frontend",
+  "event-runtime": 10427382040,
+  "pcnt-running": 40,
+  "metric-value": "0.914428",
+  "metric-unit": "frontend cycles idle",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "5748839292.000000",
+  "unit": "",
+  "event": "stalled-cycles-backend",
+  "event-runtime": 10273399729,
+  "pcnt-running": 40,
+  "metric-value": "9.409881",
+  "metric-unit": "backend cycles idle",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "33162825362.000000",
+  "unit": "",
+  "event": "instructions",
+  "event-runtime": 10180511199,
+  "pcnt-running": 39,
+  "metric-value": "0.542820",
+  "metric-unit": "insn per cycle",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "metric-value": "0.173352",
+  "metric-unit": "stalled cycles per insn",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "6754239678.000000",
+  "unit": "",
+  "event": "branches",
+  "event-runtime": 9914142533,
+  "pcnt-running": 38,
+  "metric-value": "264.242523",
+  "metric-unit": "M/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "556714679.000000",
+  "unit": "",
+  "event": "branch-misses",
+  "event-runtime": 9782584951,
+  "pcnt-running": 38,
+  "metric-value": "8.242448",
+  "metric-unit": "of all branches",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "11237533525.000000",
+  "unit": "",
+  "event": "L1-dcache-loads",
+  "event-runtime": 9906622475,
+  "pcnt-running": 38,
+  "metric-value": "439.640041",
+  "metric-unit": "M/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "520838232.000000",
+  "unit": "",
+  "event": "L1-dcache-load-misses",
+  "event-runtime": 9928934399,
+  "pcnt-running": 38,
+  "metric-value": "4.634809",
+  "metric-unit": "of all L1-dcache accesses",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "<not supported>",
+  "unit": "",
+  "event": "LLC-loads",
+  "event-runtime": 0,
+  "pcnt-running": 100,
+  "metric-value": "0.000000",
+  "metric-unit": "",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "<not supported>",
+  "unit": "",
+  "event": "LLC-load-misses",
+  "event-runtime": 0,
+  "pcnt-running": 100,
+  "metric-value": "0.000000",
+  "metric-unit": "",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "12574270758.000000",
+  "unit": "",
+  "event": "L1-icache-loads",
+  "event-runtime": 9927215160,
+  "pcnt-running": 38,
+  "metric-value": "491.936500",
+  "metric-unit": "M/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "56208902.000000",
+  "unit": "",
+  "event": "L1-icache-load-misses",
+  "event-runtime": 10011774061,
+  "pcnt-running": 39,
+  "metric-value": "0.447015",
+  "metric-unit": "of all L1-icache accesses",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "99664917.000000",
+  "unit": "",
+  "event": "dTLB-loads",
+  "event-runtime": 10306233666,
+  "pcnt-running": 40,
+  "metric-value": "3.899137",
+  "metric-unit": "M/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "8906792.000000",
+  "unit": "",
+  "event": "dTLB-load-misses",
+  "event-runtime": 10488897957,
+  "pcnt-running": 41,
+  "metric-value": "8.936737",
+  "metric-unit": "of all dTLB cache accesses",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "4654987.000000",
+  "unit": "",
+  "event": "iTLB-loads",
+  "event-runtime": 10583092797,
+  "pcnt-running": 41,
+  "metric-value": "182.114578",
+  "metric-unit": "K/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "13949067.000000",
+  "unit": "",
+  "event": "iTLB-load-misses",
+  "event-runtime": 10544827158,
+  "pcnt-running": 41,
+  "metric-value": "299.658560",
+  "metric-unit": "of all iTLB cache accesses",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "142824238.000000",
+  "unit": "",
+  "event": "L1-dcache-prefetches",
+  "event-runtime": 10649421999,
+  "pcnt-running": 41,
+  "metric-value": "5.587637",
+  "metric-unit": "M/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "<not supported>",
+  "unit": "",
+  "event": "L1-dcache-prefetch-misses",
+  "event-runtime": 0,
+  "pcnt-running": 100,
+  "metric-value": "0.000000",
+  "metric-unit": "",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "simple"
+}
+{
+  "counter-value": "28853.508086",
+  "unit": "msec",
+  "event": "task-clock",
+  "event-runtime": 28853508086,
+  "pcnt-running": 100,
+  "metric-value": "0.040061",
+  "metric-unit": "CPUs utilized",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "564882.000000",
+  "unit": "",
+  "event": "context-switches",
+  "event-runtime": 28853508086,
+  "pcnt-running": 100,
+  "metric-value": "19.577585",
+  "metric-unit": "K/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "1014.000000",
+  "unit": "",
+  "event": "cpu-migrations",
+  "event-runtime": 28853508086,
+  "pcnt-running": 100,
+  "metric-value": "35.143040",
+  "metric-unit": "/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "1271.000000",
+  "unit": "",
+  "event": "page-faults",
+  "event-runtime": 28853508086,
+  "pcnt-running": 100,
+  "metric-value": "44.050103",
+  "metric-unit": "/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "65326767507.000000",
+  "unit": "",
+  "event": "cycles",
+  "event-runtime": 11519593989,
+  "pcnt-running": 39,
+  "metric-value": "2.264084",
+  "metric-unit": "GHz",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "578718682.000000",
+  "unit": "",
+  "event": "stalled-cycles-frontend",
+  "event-runtime": 11529846827,
+  "pcnt-running": 39,
+  "metric-value": "0.885883",
+  "metric-unit": "frontend cycles idle",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "6012524735.000000",
+  "unit": "",
+  "event": "stalled-cycles-backend",
+  "event-runtime": 11732304850,
+  "pcnt-running": 40,
+  "metric-value": "9.203769",
+  "metric-unit": "backend cycles idle",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "32674621625.000000",
+  "unit": "",
+  "event": "instructions",
+  "event-runtime": 11935079308,
+  "pcnt-running": 41,
+  "metric-value": "0.500172",
+  "metric-unit": "insn per cycle",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "metric-value": "0.184012",
+  "metric-unit": "stalled cycles per insn",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "6771189163.000000",
+  "unit": "",
+  "event": "branches",
+  "event-runtime": 11972614083,
+  "pcnt-running": 41,
+  "metric-value": "234.674728",
+  "metric-unit": "M/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "569198747.000000",
+  "unit": "",
+  "event": "branch-misses",
+  "event-runtime": 11685171971,
+  "pcnt-running": 40,
+  "metric-value": "8.406186",
+  "metric-unit": "of all branches",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "11429287540.000000",
+  "unit": "",
+  "event": "L1-dcache-loads",
+  "event-runtime": 11656874820,
+  "pcnt-running": 40,
+  "metric-value": "396.114313",
+  "metric-unit": "M/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "534996725.000000",
+  "unit": "",
+  "event": "L1-dcache-load-misses",
+  "event-runtime": 11566643764,
+  "pcnt-running": 40,
+  "metric-value": "4.680928",
+  "metric-unit": "of all L1-dcache accesses",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "<not supported>",
+  "unit": "",
+  "event": "LLC-loads",
+  "event-runtime": 0,
+  "pcnt-running": 100,
+  "metric-value": "0.000000",
+  "metric-unit": "",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "<not supported>",
+  "unit": "",
+  "event": "LLC-load-misses",
+  "event-runtime": 0,
+  "pcnt-running": 100,
+  "metric-value": "0.000000",
+  "metric-unit": "",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "12875006365.000000",
+  "unit": "",
+  "event": "L1-icache-loads",
+  "event-runtime": 11455898696,
+  "pcnt-running": 39,
+  "metric-value": "446.219792",
+  "metric-unit": "M/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "57393459.000000",
+  "unit": "",
+  "event": "L1-icache-load-misses",
+  "event-runtime": 11339951861,
+  "pcnt-running": 39,
+  "metric-value": "0.445774",
+  "metric-unit": "of all L1-icache accesses",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "110149942.000000",
+  "unit": "",
+  "event": "dTLB-loads",
+  "event-runtime": 11286296951,
+  "pcnt-running": 39,
+  "metric-value": "3.817558",
+  "metric-unit": "M/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "9048109.000000",
+  "unit": "",
+  "event": "dTLB-load-misses",
+  "event-runtime": 11383799213,
+  "pcnt-running": 39,
+  "metric-value": "8.214357",
+  "metric-unit": "of all dTLB cache accesses",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "9309587.000000",
+  "unit": "",
+  "event": "iTLB-loads",
+  "event-runtime": 11255516194,
+  "pcnt-running": 39,
+  "metric-value": "322.650091",
+  "metric-unit": "K/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "14157411.000000",
+  "unit": "",
+  "event": "iTLB-load-misses",
+  "event-runtime": 11351614547,
+  "pcnt-running": 39,
+  "metric-value": "152.073459",
+  "metric-unit": "of all iTLB cache accesses",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "146745748.000000",
+  "unit": "",
+  "event": "L1-dcache-prefetches",
+  "event-runtime": 11449841442,
+  "pcnt-running": 39,
+  "metric-value": "5.085889",
+  "metric-unit": "M/sec",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
+{
+  "counter-value": "<not supported>",
+  "unit": "",
+  "event": "L1-dcache-prefetch-misses",
+  "event-runtime": 0,
+  "pcnt-running": 100,
+  "metric-value": "0.000000",
+  "metric-unit": "",
+  "benchmark_nr": "0c4072de3cf0134374e816dc649406d6",
+  "clients_nr": "1",
+  "protocol": "extended"
+}
