@@ -3,6 +3,36 @@
  *
  * This code is based on: https://git.kernel.dk/cgit/liburing/tree/examples/proxy.c
  * (C) 2024 Jens Axboe <axboe@kernel.dk>
+ *
+ *
+ *
+ *
+ * TODO:
+ *  - Replace the following functionality (from pgagroal):
+ *       if (config->idle_timeout > 0)
+ *       {
+ *          ev_periodic_init (&idle_timeout, idle_timeout_cb, 0.,
+ *                            MAX(1. * config->idle_timeout / 2., 5.), 0);
+ *          ev_periodic_start (main_loop, &idle_timeout);
+ *       }
+ *       if (config->max_connection_age > 0)
+ *       {
+ *          ev_periodic_init (&max_connection_age, max_connection_age_cb, 0.,
+ *                            MAX(1. * config->max_connection_age / 2., 5.), 0);
+ *          ev_periodic_start (main_loop, &max_connection_age);
+ *       }
+ *       if (config->validation == VALIDATION_BACKGROUND)
+ *       {
+ *          ev_periodic_init (&validation, validation_cb, 0.,
+ *                            MAX(1. * config->background_interval, 5.), 0);
+ *          ev_periodic_start (main_loop, &validation);
+ *       }
+ *       if (config->disconnect_client > 0)
+ *       {
+ *          ev_periodic_init (&disconnect_client, disconnect_client_cb, 0.,
+ *                            MIN(300., MAX(1. * config->disconnect_client / 2., 1.)), 0);
+ *          ev_periodic_start (main_loop, &disconnect_client);
+ *       }
  */
 
 /* system */
@@ -22,125 +52,97 @@
 /* io lib */
 #include "io.h"
 
-static struct io_configuration ctx = {0 };
+static struct io_configuration ctx = { 0 };
 
-char* client_port = "8800";
-char* server_port = "8801";
+#define CLOSE_FD 1 << 1
 
 
-enum {
-    ACCEPT  = 1,
-    RECEIVE = 2,
-    SEND    = 3,
-    CONNECT = 4,
-    SOCKET  = 5,
-    SIGNAL  = 6,
-    /* TODO: ADD SIGNALS */
+/*
+ * ACCEPT | RECEIVE
+ */
+
+int (*handlers[])(struct io *, struct io_uring_cqe *, void**) =
+{
+    [__ACCEPT]  = io_accept_handler,
+    [__RECEIVE] = io_receive_handler,
+    [__SEND]    = io_send_handler,
+    [__SIGNAL]  = io_signal_handler,
+    [__SOCKET]  = io_socket_handler,
+    [__CONNECT] = io_connect_handler,
 };
 
-int (*handlers[])(struct io *, struct io_uring_cqe *) =
+void
+next_bid(int *bid)
 {
-   [ACCEPT]  = io_handle_accept,
-   [RECEIVE] = io_handle_receive,
-   [SEND]    = io_handle_send,
-   [SOCKET]  = io_handle_socket,
-   [CONNECT] = io_handle_connect,
-   [SIGNAL]  = io_handle_signal,
-};
-
-int prepare_out_socket(struct io *conn)
-{
-   int ret = 0;
-   int fd = -1;
-   struct addrinfo hints;
-   struct addrinfo *res;
-
-   memset(&hints, 0, sizeof(hints));
-   hints.ai_family = AF_UNSPEC;
-   hints.ai_socktype = SOCK_STREAM;
-
-   if ((ret = getaddrinfo("localhost", server_port, &hints, &res)) < 0)
-   {
-      perror("getaddrinfo\n");
-      return 1;
-   }
-
-   if ((fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) < 0)
-   {
-      perror("socket\n");
-      return 1;
-   }
-
-   if (connect(fd, res->ai_addr, res->ai_addrlen) < 0)
-   {
-      fprintf(stdout, "Error connecting to server");
-      return 1;
-   }
-
-   io_store_fd(conn, fd);
-
-   return 0;
+   *bid = ( *bid + 1 ) % ctx.buf_count;
 }
 
-int prepare_in_socket(struct io *conn)
+int
+io_next_entry(struct io* io)
 {
-   int optval;
-   int fd = -1;
-   int ret = 0;
-   struct addrinfo hints;
-   struct addrinfo *res;
-   memset(&hints, 0, sizeof(hints));
-
-   hints.ai_family = AF_UNSPEC;
-   hints.ai_socktype = SOCK_STREAM;
-   hints.ai_flags = AI_PASSIVE;
-
-   ret = getaddrinfo(NULL, client_port, &hints, &res);
-   if (ret < 0)
+   int i;
+   for (i = 0; i < FDS; i++)
    {
-      perror("getaddrinfo\n");
-      return 1;
+      if (io->fd_table[i].fd < 0)
+      {
+         return i;
+      }
    }
-
-   if ((fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) < 0)
-   {
-      perror("socket\n");
-      return 1;
-   }
-
-   optval = 1;
-   ret = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-   if (ret < 0)
-   {
-      perror("setsockopt");
-      exit(EXIT_FAILURE);
-   }
-
-   ret = bind(fd, res->ai_addr, res->ai_addrlen);
-   if (ret < 0)
-   {
-      perror("bind\n");
-      return 1;
-   }
-
-   ret = listen(fd, 16);
-   if (ret < 0)
-   {
-      perror("listen\n");
-      return 1;
-   }
-
-   io_store_fd(conn, fd);
-
-   return 0;
+   return -1;
 }
 
-//struct io_connection*
-//io_cqe_to_connection(struct io_uring_cqe *cqe)
-//{
-//   struct user_data ud = { .as_u64 = cqe->user_data };
-//   return ctx.connections[ud.id];
-//}
+int
+io_register_event(struct io *io, int fd, int event, io_event_cb callback, void* data)
+{
+   int ret = 0;
+   int registered = 0;
+   struct fd_entry *entry;
+   int entry_index;
+
+   if (fd < 0) {
+      fprintf(stderr, "io_register_event: Invalid file descriptor: %d\n", fd);
+      return 1;
+   }
+   if (event < 0 || event >= EVENTS_NR) {
+      fprintf(stderr, "io_register_event: Invalid event number: %d\n", event);
+      return 1;
+   }
+
+   entry_index = io_next_entry(io);
+   if (entry_index < 0)
+   {
+      fprintf(stderr, "io_register_event: Not enough room for another fd\n");
+      return 1;
+   }
+
+   entry = &io->fd_table[entry_index];
+   entry->fd = fd;
+
+   if (event & ACCEPT)
+   {
+      io_prepare_accept(io, fd);
+      entry->callbacks[__ACCEPT] = callback;
+      registered++;
+   }
+   if (event & RECEIVE)
+   {
+      io_prepare_receive(io, fd);
+      entry->callbacks[__RECEIVE] = callback;
+      registered++;
+   }
+   if (event & SEND)
+   {
+      io_prepare_send(io, fd, data);
+      entry->callbacks[__SEND] = callback;
+      registered++;
+   }
+
+   printf("[DEBUG] io_register_event: Registered %d events\n", registered);
+
+   ret = registered > 0 ? 0 : 1;
+
+   return ret;
+}
 
 void
 io_encode_data(struct io_uring_sqe *sqe, uint8_t op, uint16_t id, uint16_t bid, uint16_t fd)
@@ -150,7 +152,7 @@ io_encode_data(struct io_uring_sqe *sqe, uint8_t op, uint16_t id, uint16_t bid, 
            .id = id,
            .bid = bid,
            .fd = fd,
-           .__rsv = 0,
+           .rsv = 0,
    };
    io_uring_sqe_set_data64(sqe, ud.as_u64);
 }
@@ -176,129 +178,11 @@ io_cqe_to_bid(struct io_uring_cqe *cqe)
    return ud.bid;
 }
 
-/**
- * Handles accept from cqe main_io then prepares a receive.
- * @param io
- * @param cqe
- * @return
- */
-int
-io_handle_accept(struct io *io, struct io_uring_cqe *cqe)
-{
-   pid_t pid;
-   pid = fork();
-
-   if (!pid) /* child */
-   {
-      /*
-       * TODO
-       *  Like other multishot type requests, the application should look at the CQE flags and see if IORING_CQE_F_MORE
-       *  is set on completion as an indication of whether or not the accept request will generate further CQEs.
-       *  Ref.: https://man.archlinux.org/man/extra/liburing/io_uring_prep_multishot_accept.3.en
-       */
-      struct io *child_io;
-      io_init(&child_io);
-      io_prepare_receive(child_io, cqe->res);
-      io_loop(child_io);
-   }
-   else
-   {
-      printf("connection established. PID = %d\n", pid);
-   }
-   return 0;
-}
-
-int
-io_handle_signal(struct io *io, struct io_uring_cqe *cqe)
-{
-   return 0;
-}
-
-int
-io_handle_connect(struct io *io, struct io_uring_cqe *cqe)
-{
-   struct io **io_p = &io;
-
-   return 0;
-}
-
-int
-io_handle_receive(struct io *io, struct io_uring_cqe *cqe)
-{
-   int bid = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
-   char* msg = &io->br.buf[bid];
-   size_t msglen;
-
-   /* Unused */
-   struct io_buf_ring *cbr = &io->br;
-   int nr_packets = 0;
-   int pending_recv = 0;
-   int in_bytes = cqe->res;
-   struct io_uring_buf *io_buf;
-   int nr_bufs = ctx.buf_count;
-   int* bid_p = &bid;
-   /**********/
-
-   printf("IORING_CQE_F_MORE: %d\n", cqe->flags & IORING_CQE_F_MORE);
-   if (!(cqe->flags & IORING_CQE_F_BUFFER)) {
-      pending_recv = 0;
-
-      if (!(cqe->res)) {
-         fprintf(stderr, "no buffer assigned, res=%d\n", cqe->res);
-         return 1;
-      }
-   }
-
-   printf("Contents of io->br.buf[%d]: %s\n", bid, msg);
-
-   return 0;
-}
-
-int
-io_handle_send(struct io *io, struct io_uring_cqe *cqe)
-{
-   int ret;
-   int fd;
-
-
-   fd = cqe->res;
-
-
-   return 0;
-}
-
-int
-io_handle_cqe(struct io *io, struct io_uring_cqe *cqe)
-{
-   int ret;
-   int (*handler)(struct io *, struct io_uring_cqe *);
-
-   int op = io_decode_op(cqe);
-
-   handler = handlers[op];
-   ret = handler(io, cqe);
-   if (ret)
-   {
-      fprintf(stderr, "handler error\n");
-      return 1;
-   }
-
-   return 0;
-}
-
 int
 io_prepare_connect(struct io *io, int fd, union io_sockaddr addr)
 {
    int ret;
    struct io_uring_sqe *sqe = io_get_sqe(io);
-
-   ret = io_store_fd(io, fd);
-   if (ret)
-   {
-      fprintf(stderr, "io_prepare_connect\n");
-      return 1;
-   }
-
 
    /* expects addr to be set correctly */
 
@@ -338,67 +222,19 @@ int
 io_handle_socket(struct io *io, struct io_uring_cqe *cqe)
 {
    return 1;
-//   int ret;
-//   int socket;
-//   int fd;
-//   struct io_uring_sqe *sqe;
-//   struct user_data ud = io_decode_data(cqe);
-//
-//   int port = 8888;
-//
-//   fd = cqe->res;
-//
-//   if (ctx.ipv6)
-//   {
-//      memset(&c->addr6, 0, sizeof(c->addr6));
-//      c->addr6.sin6_family = AF_INET6;
-//      c->addr6.sin6_port = htons(port);
-//      ret = inet_pton(AF_INET6, "localhost", &c->addr6.sin6_addr);
-//   }
-//   else
-//   {
-//      memset(&c->addr, 0, sizeof(c->addr));
-//      c->addr.sin_family = AF_INET;
-//      c->addr.sin_port = htons(send_port);
-//      ret = inet_pton(AF_INET, host, &c->addr.sin_addr);
-//   }
-//   if (ret <= 0) {
-//      if (!ret)
-//         fprintf(stderr, "host not in right format\n");
-//      else
-//         perror("inet_pton");
-//      return 1;
-//   }
-//
-//   io_connection_register_fd(io, fd);
-//
-//   sqe = get_sqe(ring);
-//   if (ipv6) {
-//      io_uring_prep_connect(sqe, c->out_fd,
-//                            (struct sockaddr *) &c->addr6,
-//                            sizeof(c->addr6));
-//   } else {
-//      io_uring_prep_connect(sqe, c->out_fd,
-//                            (struct sockaddr *) &c->addr,
-//                            sizeof(c->addr));
-//   }
-//   encode_userdata(sqe, c, __CONNECT, 0, c->out_fd);
-//   return 0;
 }
-
 
 int
 io_init(struct io **io)
 {
    int ret;
 
-   if (*io)
+   *io = calloc(1, sizeof(struct io));
+   if (!*io)
    {
-      fprintf(stderr, "io_init: io is a non-null pointer\n");
+      fprintf(stderr, "io_init: calloc\n");
       return 1;
    }
-
-   *io = calloc(1, sizeof(struct io));
 
    ret = io_uring_queue_init_params(ctx.entries, &(*io)->ring, &ctx.params);
    if (ret)
@@ -407,9 +243,12 @@ io_init(struct io **io)
       return 1;
    }
 
-   memset((*io)->fd, -1, FDS);
-
    io_setup_buffers(*io);
+
+   for (int i = 0; i < FDS; i++)
+   {
+      (*io)->fd_table[i].fd = -1;
+   }
 
    return 0;
 }
@@ -504,23 +343,12 @@ int
 io_prepare_accept(struct io *io, int fd)
 {
    struct io_uring_sqe *sqe = io_get_sqe(io);
-//   if (fd < 0)
-//   {
-//      fprintf(stderr, "io_prepare_accept: io_get_next_fd\n");
-//      exit(1);
-//   }
 
-   io_encode_data(sqe, ACCEPT, io->id, io->bid, fd);
+   io_encode_data(sqe, __ACCEPT, io->id, io->bid, fd);
 
    io_uring_prep_multishot_accept(sqe, fd, NULL, NULL, 0);
 
    return 0;
-}
-
-void
-next_bid(int *bid)
-{
-   *bid = ( *bid + 1 ) % ctx.buf_count;
 }
 
 int
@@ -529,19 +357,10 @@ io_prepare_receive(struct io *io, int fd)
    int ret;
    struct io_uring_sqe *sqe = io_get_sqe(io);
    int bid = 0;
-//   next_bid(&io->bid);
 
-   io_uring_prep_recv_multishot(sqe,
-                                fd,
-                                NULL,
-                                0,
-                                0);
+   io_uring_prep_recv_multishot(sqe, fd, NULL, 0, 0);
 
-   io_encode_data(sqe,
-                  RECEIVE,
-                  io->id,
-                  0,
-                  fd);
+   io_encode_data(sqe, __RECEIVE, io->id, 0, fd);
 
    sqe->flags |= IOSQE_BUFFER_SELECT;
    sqe->buf_group = 0;
@@ -549,15 +368,12 @@ io_prepare_receive(struct io *io, int fd)
    return 0;
 }
 
-
 int
-io_prepare_send(struct io *io, int fd, char *data)
+io_prepare_send(struct io *io, int fd, void *data)
 {
    int res;
    size_t data_len;
    struct io_uring_sqe *sqe = io_get_sqe(io);
-
-   io_store_fd(io, fd);
 
    if (!data)
    {
@@ -573,18 +389,6 @@ io_prepare_send(struct io *io, int fd, char *data)
    io_encode_data(sqe, SEND, io->id, 0, fd);
 
    io_uring_prep_send(sqe, fd, &io->br, ctx.buf_size, 0);
-
-   return 0;
-}
-
-int
-io_start(struct io* main_io, int listening_socket)
-{
-   /* TODO[1]: setup signals to follow up */
-   /* TODO[2]: implement fixed_files opt */
-   io_uring_queue_init_params(ctx.entries, &main_io->ring, &ctx.params);
-   io_prepare_accept(main_io, listening_socket);
-   io_loop(main_io);
 
    return 0;
 }
@@ -631,9 +435,9 @@ io_loop(struct io *io) {
       io_uring_for_each_cqe(&(io->ring), head, cqe)
       {
          printf("%d\n", cqe->res);
-         if (io_handle_cqe(io, cqe))
+         if (io_handle_event(io, cqe))
          {
-            fprintf(stderr, "io_handle_cqe\n");
+            fprintf(stderr, "io_loop: io_handle_event\n");
             return 1;
          }
          events++;
@@ -651,10 +455,21 @@ io_loop(struct io *io) {
    return 0;
 }
 
-/**
- * TODO: Assess the best size of the buffer rings
- * based on empty buffer rings and consumption speed.
- */
+int
+io_cleanup(struct io *io)
+{
+   if (io)
+   {
+      io_uring_queue_exit(&io->ring);
+      if (io->br.buf)
+      {
+         free(io->br.buf);
+      }
+      free(io);
+   }
+   return 0;
+}
+
 int
 io_setup_buffers(struct io *io)
 {
@@ -674,21 +489,6 @@ io_setup_buffers(struct io *io)
       return 1;
    }
 
-//  TODO
-//   br_ptr = (void *) cbr->br;
-//   for (int bid = 0; bid < ctx->br_count; bid++) {
-//      /* Assign br_ptr with the addr/len/buffer_id supplied.
-//       * I will be able to retrieve this by bid after. */
-//      io_uring_buf_ring_add(br_ptr,
-//                            cbr->buf,
-//                            ctx->br_size,
-//                            bid,
-//                            ctx->br_mask,
-//                            bid);
-//      br_ptr += ctx->br_size;
-//   }
-//   io_uring_buf_ring_advance(cbr->br, ctx->br_count);
-
    cbr->br = io_uring_setup_buf_ring(&io->ring, ctx.buf_count, 0, 0, &ret);
    if (!cbr->br)
    {
@@ -705,8 +505,6 @@ io_setup_buffers(struct io *io)
    }
    io_uring_buf_ring_advance(cbr->br, ctx.buf_count);
 
-
-
    io->bid = 0;
    return ret;
 }
@@ -719,13 +517,154 @@ io_setup_buffer_ring(struct io *io)
    return 0;
 }
 
+/************ HANDLERS
+ *
+ */
+
 int
-io_store_fd(struct io *io, int fd)
+io_accept_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
 {
-   if (io->fd_count >= FDS)
+   return 0;
+}
+
+int
+io_signal_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+{
+   return 0;
+}
+
+int
+io_connect_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+{
+   return 0;
+}
+
+int
+io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+{
+   int bid = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
+   void *buf_base = io->br.buf;
+   char* msg = (char *)(buf_base + bid * ctx.buf_size);
+   size_t msglen;
+   int pending_recv = 0;
+
+   printf("[DEBUG] io_receive_handler: IORING_CQE_F_MORE: %d\n", cqe->flags & IORING_CQE_F_MORE);
+   if (!(cqe->flags & IORING_CQE_F_BUFFER))
    {
-      fprintf(stderr, "io_connection_get_fd: io->fd_count >= FDS\n");
-      return -1;
+      pending_recv = 0;
+
+      if (!(cqe->res))
+      {
+         printf("[DEBUG] A connection was closed\n");
+         return CLOSE_FD;
+      }
    }
-   return io->fd[io->fd_count++] = fd;
+
+   printf("[DEBUG] io_receive_handler: Contents of io->br.buf[%d]: %s\n", bid, msg);
+   *buf = (void*) msg;
+
+   return 0;
+}
+
+int
+io_send_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+{
+   int ret;
+   int fd;
+
+   fd = cqe->res;
+
+   /* TODO: do something cool */
+
+   return 0;
+}
+
+int
+io_socket_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+{
+   int ret;
+   int fd;
+
+   fd = cqe->res;
+
+   /* TODO: do something cool */
+
+   return 0;
+}
+
+int
+io_handle_event(struct io *io, struct io_uring_cqe *cqe)
+{
+   int fd;
+   int res_fd;
+   int event;
+   int ret = 0;
+   int entry_index;
+   void **buf;
+   int (*handler)(struct io *, struct io_uring_cqe *, void*);
+   struct fd_entry *entry;
+
+   struct user_data ud = io_decode_data(cqe);
+
+   event = ud.op;
+
+   handler = handlers[event];
+   if (!handler)
+   {
+      fprintf(stderr, "io_handle_event: handler does not exist for event %d\n", event);
+      return 1;
+   }
+
+   ret = handler(io, cqe, buf);
+
+   fd = ud.fd;
+   res_fd = cqe->res;
+   entry_index = io_table_lookup(io, fd);
+   if (entry_index < 0)
+   {
+      fprintf(stderr, "io_handle_event\n");
+      return 1;
+   }
+
+   if (ret & CLOSE_FD)
+   {
+      // clean entry
+      close(fd);
+      io->fd_table[entry_index].fd = -1;
+      return 0;
+   }
+   else if (ret)
+   {
+      fprintf(stderr, "io_handle_event: handler error\n");
+      return 1;
+   }
+
+   entry = &io->fd_table[entry_index];
+   if (entry->callbacks[event])
+   {
+      ret = entry->callbacks[event](io, res_fd, ret, buf);
+   }
+
+   if (buf)
+   {
+      io_uring_buf_ring_advance(io->br.br, ctx.buf_count);
+   }
+
+   return ret;
+}
+
+int
+io_table_lookup(struct io *io, int fd)
+{
+   struct fd_entry* entry;
+   for (int i = 0; i < FDS; i++)
+   {
+      entry = &io->fd_table[i];
+      if (entry->fd == fd)
+      {
+         return i;
+      }
+   }
+   fprintf(stderr, "io_table_lookup\n");
+   return -1;
 }
