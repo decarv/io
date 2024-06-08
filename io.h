@@ -25,7 +25,7 @@
 
 #define ALIGNMENT sysconf(_SC_PAGESIZE)
 #define BUFFER_SIZE (1 << 5) /* 4KiB */
-#define BUFFER_POOL_SIZE 4
+#define BUFFER_COUNT 4
 
 #define CONNECTIONS (1 << 16)
 #define EVENTS_NR 8
@@ -88,7 +88,7 @@ struct io_returned_buf {
 
 struct fd_entry {
     int fd;
-    int (*callbacks[EVENTS_NR])(struct io *, int, int, void*);
+    int (*callbacks[EVENTS_NR])(struct io *, int, int, void**);
 };
 struct io {
 
@@ -175,12 +175,12 @@ int io_register_fd(struct io *io, int fd);
 
 int io_handle_event(struct io* io, struct io_uring_cqe* cqe);
 
-int io_send_handler(struct io *io, struct io_uring_cqe *cqe, void** buf);
-int io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** buf);
-int io_accept_handler(struct io *io, struct io_uring_cqe *cqe, void** buf);
-int io_connect_handler(struct io *io, struct io_uring_cqe *cqe, void** buf);
-int io_socket_handler(struct io *io, struct io_uring_cqe *cqe, void** buf);
-int io_signal_handler(struct io *io, struct io_uring_cqe *cqe, void** buf);
+int io_send_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
+int io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
+int io_accept_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
+int io_connect_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
+int io_socket_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
+int io_signal_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
 
 void io_encode_data(struct io_uring_sqe *sqe, uint8_t op, uint16_t id, uint16_t bid, uint16_t fd);
 struct user_data io_decode_data(struct io_uring_cqe *cqe);

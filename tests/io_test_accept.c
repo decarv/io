@@ -41,13 +41,15 @@ accept_cb(struct io *io, int client_fd, int err, void** buf)
    }
 
    struct client_watcher *cw = malloc(sizeof(struct client_watcher));
-   if (!cw) {
+   if (!cw)
+   {
       perror("malloc failed");
       close(client_fd);
    }
 
    cw->data = malloc(DATA_SIZE);
-   if (!cw->data) {
+   if (!cw->data)
+   {
       perror("malloc failed");
       close(client_fd);
       free(cw);

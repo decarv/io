@@ -12,38 +12,50 @@
 /* io lib */
 #include "io.h"
 
-char* client_port = "8800";
-char* server_port = "8801";
+const char* port = "8800";
 
-int
-prepare_out_socket()
+int prepare_out_socket()
 {
-   int ret = 0;
+   int ret;
    int fd = -1;
    struct addrinfo hints;
-   struct addrinfo *res;
+   struct addrinfo *res, *rp;
 
    memset(&hints, 0, sizeof(hints));
    hints.ai_family = AF_UNSPEC;
    hints.ai_socktype = SOCK_STREAM;
 
-   if ((ret = getaddrinfo("localhost", server_port, &hints, &res)) < 0)
+   if ((ret = getaddrinfo("localhost", port, &hints, &res)) != 0)
    {
-      perror("getaddrinfo\n");
-      return 1;
+      fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(ret));
+      return -1;
    }
 
-   if ((fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) < 0)
+   for (rp = res; rp != NULL; rp = rp->ai_next)
    {
-      perror("socket\n");
-      return 1;
+      fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+      if (fd == -1)
+      {
+         continue;
+      }
+
+      if (connect(fd, rp->ai_addr, rp->ai_addrlen) != -1)
+      {
+         break;
+      }
+
+      close(fd);
    }
 
-   if (connect(fd, res->ai_addr, res->ai_addrlen) < 0)
+   if (rp == NULL)
    {
-      fprintf(stdout, "Error connecting to server");
-      return 1;
+      fprintf(stderr, "Could not connect\n");
+      return -1;
    }
+
+   freeaddrinfo(res);
+
+   printf("created socket -> %d\n", fd);
 
    return fd;
 }
@@ -62,7 +74,7 @@ prepare_in_socket()
    hints.ai_socktype = SOCK_STREAM;
    hints.ai_flags = AI_PASSIVE;
 
-   ret = getaddrinfo(NULL, client_port, &hints, &res);
+   ret = getaddrinfo(NULL, port, &hints, &res);
    if (ret < 0)
    {
       perror("getaddrinfo\n");
@@ -96,6 +108,8 @@ prepare_in_socket()
       perror("listen\n");
       return 1;
    }
+
+   printf("Server listening on port %s...\n", port);
 
    return fd;
 }

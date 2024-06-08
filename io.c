@@ -61,7 +61,7 @@ static struct io_configuration ctx = { 0 };
  * ACCEPT | RECEIVE
  */
 
-int (*handlers[])(struct io *, struct io_uring_cqe *, void**) =
+int (*handlers[])(struct io *, struct io_uring_cqe *, void**, int*) =
 {
     [__ACCEPT]  = io_accept_handler,
     [__RECEIVE] = io_receive_handler,
@@ -136,8 +136,6 @@ io_register_event(struct io *io, int fd, int event, io_event_cb callback, void* 
       entry->callbacks[__SEND] = callback;
       registered++;
    }
-
-   printf("[DEBUG] io_register_event: Registered %d events\n", registered);
 
    ret = registered > 0 ? 0 : 1;
 
@@ -304,7 +302,7 @@ io_context_setup(struct io_configuration_options config)
    }
    if (!ctx.buf_count)
    {
-      ctx.buf_count = BUFFER_POOL_SIZE;
+      ctx.buf_count = BUFFER_COUNT;
    }
    if (!ctx.buf_size)
    {
@@ -434,7 +432,6 @@ io_loop(struct io *io) {
       events = 0;
       io_uring_for_each_cqe(&(io->ring), head, cqe)
       {
-         printf("%d\n", cqe->res);
          if (io_handle_event(io, cqe))
          {
             fprintf(stderr, "io_loop: io_handle_event\n");
@@ -474,6 +471,8 @@ int
 io_setup_buffers(struct io *io)
 {
    int ret;
+   void* ptr;
+
    ret = io_setup_buffer_ring(io);
 
    struct io_buf_ring *cbr = &io->br;
@@ -482,8 +481,7 @@ io_setup_buffers(struct io *io)
    {
       fprintf(stderr, "io_setup_buffers: use_huge not implemented yet\n"); /* TODO */
    }
-   if (posix_memalign(&cbr->buf, ALIGNMENT,
-                      ctx.buf_size))
+   if (posix_memalign(&cbr->buf, ALIGNMENT, ctx.buf_count * ctx.buf_size))
    {
       perror("io_setup_buffer_ring: posix_memalign");
       return 1;
@@ -496,7 +494,7 @@ io_setup_buffers(struct io *io)
       return 1;
    }
 
-   void* ptr = cbr->buf;
+   ptr = cbr->buf;
    for (int i = 0; i < ctx.buf_count; i++)
    {
       printf("add bid %d, data %p\n", i, ptr);
@@ -522,52 +520,83 @@ io_setup_buffer_ring(struct io *io)
  */
 
 int
-io_accept_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+io_accept_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 {
    return 0;
 }
 
 int
-io_signal_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+io_signal_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 {
    return 0;
 }
 
 int
-io_connect_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+io_connect_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 {
    return 0;
 }
 
 int
-io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 {
-   int bid = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
-   void *buf_base = io->br.buf;
-   char* msg = (char *)(buf_base + bid * ctx.buf_size);
-   size_t msglen;
+   /*
+    * If the buffer is too small it will overflow and apparently there is nothing we can do about it...
+    *
+    */
+   struct io_buf_ring *br = &io->br;
+   char *buf_base = (char *) (br->buf + *bid * ctx.buf_size);
    int pending_recv = 0;
 
-   printf("[DEBUG] io_receive_handler: IORING_CQE_F_MORE: %d\n", cqe->flags & IORING_CQE_F_MORE);
+   if (cqe->res == -ENOBUFS)
+   {
+      fprintf(stderr, "Not enough buffers\n");
+      return 0;
+   }
+
    if (!(cqe->flags & IORING_CQE_F_BUFFER))
    {
       pending_recv = 0;
 
       if (!(cqe->res))
       {
-         printf("[DEBUG] A connection was closed\n");
          return CLOSE_FD;
       }
    }
 
-   printf("[DEBUG] io_receive_handler: Contents of io->br.buf[%d]: %s\n", bid, msg);
-   *buf = (void*) msg;
+   int this_bytes = 0;
+   int nr_packets = 0;
+   int in_bytes = cqe->res;
+   printf("Received Bytes: %d\n", in_bytes);
+   while (0)
+   {
+      void *data;
+
+      data = (char *) buf_base;
+      if (this_bytes > in_bytes)
+      {
+         this_bytes = in_bytes;
+      }
+
+      in_bytes -= this_bytes;
+
+      printf("%s\n", (char*)data);
+
+      *bid = (*bid + 1) & (ctx.buf_count - 1);
+      nr_packets++;
+   }
+
+
+//   log("[DEBUG] io_receive_handler: Contents of io->br.buf[%d]: %s\n", bid, msg);
+   *buf = (void*) buf_base;
+
+   io_uring_buf_ring_advance(br->br, 1);
 
    return 0;
 }
 
 int
-io_send_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+io_send_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 {
    int ret;
    int fd;
@@ -580,7 +609,7 @@ io_send_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
 }
 
 int
-io_socket_handler(struct io *io, struct io_uring_cqe *cqe, void** buf)
+io_socket_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 {
    int ret;
    int fd;
@@ -601,7 +630,7 @@ io_handle_event(struct io *io, struct io_uring_cqe *cqe)
    int ret = 0;
    int entry_index;
    void **buf;
-   int (*handler)(struct io *, struct io_uring_cqe *, void*);
+   int (*handler)(struct io *, struct io_uring_cqe *, void**, int*);
    struct fd_entry *entry;
 
    struct user_data ud = io_decode_data(cqe);
@@ -615,7 +644,12 @@ io_handle_event(struct io *io, struct io_uring_cqe *cqe)
       return 1;
    }
 
-   ret = handler(io, cqe, buf);
+   int bid = cqe->flags >> IORING_CQE_BUFFER_SHIFT;
+   int bid_start = bid;
+   int bid_end = bid;
+
+   ret = handler(io, cqe, buf, &bid_end);
+
 
    fd = ud.fd;
    res_fd = cqe->res;
@@ -647,7 +681,7 @@ io_handle_event(struct io *io, struct io_uring_cqe *cqe)
 
    if (buf)
    {
-      io_uring_buf_ring_advance(io->br.br, ctx.buf_count);
+      io_uring_buf_ring_advance(io->br.br, bid_end - bid_start + 1);
    }
 
    return ret;
