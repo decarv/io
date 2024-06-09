@@ -13,11 +13,35 @@ struct client_watcher {
     struct io_uring_sqe *sqe;
 };
 
+struct connection {
+    int server_fd;
+    int client_fd;
+    struct io *io;
+};
 
 int
-receive_cb(struct io *io, int fd, int err, void** buf)
+send_cb(void *data, int fd, int err)
 {
-   printf("receive_cb: contents of buf: %s\n", (char*)*buf);
+   return 0;
+}
+
+int
+receive_cb(void *data, int recv_fd, int err, void* buf, size_t buf_len)
+{
+   struct connection *conn = (struct connection*) data;
+   struct io *io = conn->io;
+   int send_fd;
+
+   if (recv_fd == conn->client_fd)
+   {
+      send_fd = conn->server_fd;
+   }
+   else
+   {
+      send_fd = conn->client_fd;
+   }
+
+   io_register_event(io, send_fd, SEND, NULL, buf, buf_len);
 
    return 0;
 }
@@ -26,10 +50,12 @@ receive_cb(struct io *io, int fd, int err, void** buf)
  * fd: the fd returned by accept
  */
 int
-accept_cb(struct io *io, int client_fd, int err, void** buf)
+accept_cb(void *data, int client_fd, int err, void* buf, size_t buf_len)
 {
    struct sockaddr_in client_addr;
    socklen_t client_len = sizeof(client_addr);
+   struct connection *conn = (struct connection *) data;
+   struct io *io = conn->io;
 
    if (client_fd < 0)
    {
@@ -61,8 +87,10 @@ accept_cb(struct io *io, int client_fd, int err, void** buf)
    cw->total_received = 0;
    cw->fd = client_fd;
 
+   conn->client_fd = client_fd;
+
    // Prepare to receive data from the client
-   io_register_event(io, client_fd, RECEIVE, receive_cb, NULL);
+   io_register_event(io, client_fd, RECEIVE, receive_cb, NULL, 0);
 
    printf("Accepted connection, fd=%d\n", client_fd);
 
@@ -74,7 +102,12 @@ int
 main(void)
 {
    int ret;
+   struct connection *conn = malloc(sizeof(struct connection));
    struct io *main_io = NULL;
+   int events;
+   int listening_socket;
+   int server_fd;
+
    ret = io_context_setup((struct io_configuration_options) {0});
    if (ret)
    {
@@ -82,18 +115,22 @@ main(void)
       return 1;
    }
 
-   ret = io_init(&main_io);
+   ret = io_init(&main_io, (void*) conn);
    if (ret)
    {
       fprintf(stderr, "io_connection_setup\n");
       return 1;
    }
 
-   int events;
-   int socket = prepare_in_socket();
+   conn->io = main_io;
+
+   listening_socket = prepare_in_socket();
+   server_fd = prepare_out_socket();
+
+   conn->server_fd = server_fd;
 
    events = ACCEPT;
-   io_register_event(main_io, socket, events, accept_cb, NULL);
+   io_register_event(main_io, listening_socket, events, accept_cb, NULL, 0);
    io_loop(main_io);
 
    return 0;

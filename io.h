@@ -24,8 +24,8 @@
 #include <sys/mman.h>
 
 #define ALIGNMENT sysconf(_SC_PAGESIZE)
-#define BUFFER_SIZE (1 << 5) /* 4KiB */
-#define BUFFER_COUNT 4
+#define BUFFER_SIZE (1 << 14) /* 4KiB */
+#define BUFFER_COUNT 8        /* 4KiB * 8 = 32 KiB */
 
 #define CONNECTIONS (1 << 16)
 #define EVENTS_NR 8
@@ -48,7 +48,12 @@ struct io_configuration_options {
 };
 
 struct io;
-typedef int (*io_event_cb)(struct io* io, int fd, int err, void** data);
+
+/*
+ * Data needs to contain io and then be casted.
+ */
+typedef int (*io_event_cb)(void* data, int fd, int err, void* buf, size_t buf_len);
+typedef int (*io_handler)(struct io *, struct io_uring_cqe *, void**, int*);
 
 struct io_configuration
 {
@@ -88,7 +93,7 @@ struct io_returned_buf {
 
 struct fd_entry {
     int fd;
-    int (*callbacks[EVENTS_NR])(struct io *, int, int, void**);
+    io_event_cb callbacks[EVENTS_NR];
 };
 struct io {
 
@@ -106,7 +111,10 @@ struct io {
 
    /* buffer ring */
    int bid;
-   struct io_buf_ring br;
+   struct io_buf_ring in_br;
+   struct io_buf_ring out_br;
+
+   void* data;
 
 };
 
@@ -150,7 +158,7 @@ enum {
 /* Function Definitions */
 
 /* TODO */
-int io_register_event(struct io *io, int fd, int events, io_event_cb callback, void* data);
+int io_register_event(struct io *io, int fd, int events, io_event_cb callback, void* buf, size_t buf_len);
 /********/
 
 struct io* io_cqe_to_connection(struct io_uring_cqe *cqe);
@@ -161,26 +169,26 @@ int io_context_setup(struct io_configuration_options config);
 
 int io_prepare_accept(struct io *io, int fd);
 int io_prepare_receive(struct io *io, int fd);
-int io_prepare_send(struct io *io, int fd, void* data);
+int io_prepare_send(struct io *io, int fd, void* buf, size_t data_len);
 int io_prepare_connect(struct io *io, int fd, union io_sockaddr addr);
 
 //int io_prepare_socket(struct io_connection *io, char *host);
 
 int io_start(struct io* main_io, int listening_socket);
 
-int io_init(struct io **io);
+int io_init(struct io **io, void* data);
 int io_cleanup(struct io *io);
 int io_loop(struct io *io);
 int io_register_fd(struct io *io, int fd);
 
 int io_handle_event(struct io* io, struct io_uring_cqe* cqe);
 
-int io_send_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
+int io_send_handler(struct io *io, struct io_uring_cqe *cqe,    void** buf, int*);
 int io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
-int io_accept_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
+int io_accept_handler(struct io *io, struct io_uring_cqe *cqe,  void** buf, int*);
 int io_connect_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
-int io_socket_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
-int io_signal_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*);
+int io_socket_handler(struct io *io, struct io_uring_cqe *cqe,  void** buf, int*);
+int io_signal_handler(struct io *io, struct io_uring_cqe *cqe,  void** buf, int*);
 
 void io_encode_data(struct io_uring_sqe *sqe, uint8_t op, uint16_t id, uint16_t bid, uint16_t fd);
 struct user_data io_decode_data(struct io_uring_cqe *cqe);

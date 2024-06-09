@@ -13,6 +13,7 @@
 #include "io.h"
 
 const char* port = "8800";
+const char* server_port = "8801";
 
 int prepare_out_socket()
 {
@@ -25,7 +26,7 @@ int prepare_out_socket()
    hints.ai_family = AF_UNSPEC;
    hints.ai_socktype = SOCK_STREAM;
 
-   if ((ret = getaddrinfo("localhost", port, &hints, &res)) != 0)
+   if ((ret = getaddrinfo("localhost", server_port, &hints, &res)) != 0)
    {
       fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(ret));
       return -1;

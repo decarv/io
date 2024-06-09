@@ -54,14 +54,15 @@
 
 static struct io_configuration ctx = { 0 };
 
-#define CLOSE_FD 1 << 1
+#define CLOSE_FD          1 << 1
+#define REPLENISH_BUFFERS 1 << 2
 
 
 /*
  * ACCEPT | RECEIVE
  */
 
-int (*handlers[])(struct io *, struct io_uring_cqe *, void**, int*) =
+io_handler handlers[] =
 {
     [__ACCEPT]  = io_accept_handler,
     [__RECEIVE] = io_receive_handler,
@@ -78,26 +79,35 @@ next_bid(int *bid)
 }
 
 int
-io_next_entry(struct io* io)
+io_get_entry(struct io* io, int fd)
 {
-   int i;
-   for (i = 0; i < FDS; i++)
+   int free_entry = -1;
+   for (int i = 0; i < FDS; i++)
    {
-      if (io->fd_table[i].fd < 0)
+      int registered_fd = io->fd_table[i].fd;
+      if (registered_fd == fd)
       {
          return i;
       }
+      if (free_entry < 0 && registered_fd < 0)
+      {
+         free_entry = i;
+      }
    }
-   return -1;
+
+   /* register fd */
+   io->fd_table[free_entry].fd = fd;
+
+   return free_entry;
 }
 
 int
-io_register_event(struct io *io, int fd, int event, io_event_cb callback, void* data)
+io_register_event(struct io *io, int fd, int event, io_event_cb callback, void* buf, size_t buf_len)
 {
    int ret = 0;
    int registered = 0;
-   struct fd_entry *entry;
-   int entry_index;
+   struct fd_entry *entry = NULL;
+   int entry_index = -1;
 
    if (fd < 0) {
       fprintf(stderr, "io_register_event: Invalid file descriptor: %d\n", fd);
@@ -108,7 +118,7 @@ io_register_event(struct io *io, int fd, int event, io_event_cb callback, void* 
       return 1;
    }
 
-   entry_index = io_next_entry(io);
+   entry_index = io_get_entry(io, fd);
    if (entry_index < 0)
    {
       fprintf(stderr, "io_register_event: Not enough room for another fd\n");
@@ -116,7 +126,6 @@ io_register_event(struct io *io, int fd, int event, io_event_cb callback, void* 
    }
 
    entry = &io->fd_table[entry_index];
-   entry->fd = fd;
 
    if (event & ACCEPT)
    {
@@ -132,7 +141,7 @@ io_register_event(struct io *io, int fd, int event, io_event_cb callback, void* 
    }
    if (event & SEND)
    {
-      io_prepare_send(io, fd, data);
+      io_prepare_send(io, fd, buf, buf_len);
       entry->callbacks[__SEND] = callback;
       registered++;
    }
@@ -223,7 +232,7 @@ io_handle_socket(struct io *io, struct io_uring_cqe *cqe)
 }
 
 int
-io_init(struct io **io)
+io_init(struct io **io, void *data)
 {
    int ret;
 
@@ -247,6 +256,8 @@ io_init(struct io **io)
    {
       (*io)->fd_table[i].fd = -1;
    }
+
+   (*io)->data = data;
 
    return 0;
 }
@@ -367,26 +378,14 @@ io_prepare_receive(struct io *io, int fd)
 }
 
 int
-io_prepare_send(struct io *io, int fd, void *data)
+io_prepare_send(struct io *io, int fd, void *buf, size_t data_len)
 {
-   int res;
-   size_t data_len;
+   int res = 0;
    struct io_uring_sqe *sqe = io_get_sqe(io);
 
-   if (!data)
-   {
-      data_len = 0;
-   }
-   else
-   {
-      data_len = strnlen(data, LENGTH);
-   }
-
-   io_uring_prep_send(sqe, fd, data, data_len, MSG_WAITALL | MSG_NOSIGNAL); /* TODO: why these flags? */
+   io_uring_prep_send(sqe, fd, buf, data_len, MSG_WAITALL | MSG_NOSIGNAL); /* TODO: why these flags? */
 
    io_encode_data(sqe, SEND, io->id, 0, fd);
-
-   io_uring_prep_send(sqe, fd, &io->br, ctx.buf_size, 0);
 
    return 0;
 }
@@ -458,9 +457,9 @@ io_cleanup(struct io *io)
    if (io)
    {
       io_uring_queue_exit(&io->ring);
-      if (io->br.buf)
+      if (io->in_br.buf)
       {
-         free(io->br.buf);
+         free(io->in_br.buf);
       }
       free(io);
    }
@@ -475,7 +474,7 @@ io_setup_buffers(struct io *io)
 
    ret = io_setup_buffer_ring(io);
 
-   struct io_buf_ring *cbr = &io->br;
+   struct io_buf_ring *cbr = &io->in_br;
 
    if (ctx.use_huge)
    {
@@ -538,20 +537,25 @@ io_connect_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 }
 
 int
-io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
+io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** send_buf_base, int*bid)
 {
    /*
     * If the buffer is too small it will overflow and apparently there is nothing we can do about it...
-    *
     */
-   struct io_buf_ring *br = &io->br;
-   char *buf_base = (char *) (br->buf + *bid * ctx.buf_size);
+   struct io_buf_ring *iobr = &io->in_br;
+   *send_buf_base = (void *) (iobr->buf + *bid * ctx.buf_size);
+   struct io_uring_buf *buf;
+   void *data;
    int pending_recv = 0;
+   int this_bytes;
+   int nr_packets = 0;
+   int in_bytes;
+
 
    if (cqe->res == -ENOBUFS)
    {
-      fprintf(stderr, "Not enough buffers\n");
-      return 0;
+      fprintf(stderr, "io_receive_handler: Not enough buffers\n");
+      return REPLENISH_BUFFERS;
    }
 
    if (!(cqe->flags & IORING_CQE_F_BUFFER))
@@ -564,15 +568,21 @@ io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
       }
    }
 
-   int this_bytes = 0;
-   int nr_packets = 0;
-   int in_bytes = cqe->res;
-   printf("Received Bytes: %d\n", in_bytes);
-   while (0)
-   {
-      void *data;
+   in_bytes = cqe->res;
 
-      data = (char *) buf_base;
+//   printf("[DEBUG] Received Bytes: %d\n", in_bytes);
+
+   /* If the size of the buffer (this_bytes) is greater than the size of the received bytes, then continue.
+    * Otherwise, we iterate over another buffer
+    */
+   while (in_bytes)
+   {
+      buf = &(iobr->br->bufs[*bid]);
+      data = (char *) buf->addr;
+      this_bytes = buf->len;
+      /* Break if the received bytes is smaller than buffer length.
+       * Otherwise, continue iterating over the buffers.
+       */
       if (this_bytes > in_bytes)
       {
          this_bytes = in_bytes;
@@ -580,17 +590,13 @@ io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 
       in_bytes -= this_bytes;
 
-      printf("%s\n", (char*)data);
+//      printf("[DEBUG] %s\n", (char*) data);
 
       *bid = (*bid + 1) & (ctx.buf_count - 1);
       nr_packets++;
    }
 
-
-//   log("[DEBUG] io_receive_handler: Contents of io->br.buf[%d]: %s\n", bid, msg);
-   *buf = (void*) buf_base;
-
-   io_uring_buf_ring_advance(br->br, 1);
+   io_uring_buf_ring_advance(iobr->br, 1);
 
    return 0;
 }
@@ -601,9 +607,8 @@ io_send_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
    int ret;
    int fd;
 
-   fd = cqe->res;
-
-   /* TODO: do something cool */
+   /* replenish buffer */
+   io_uring_buf_ring_add(io->in_br.br, *buf, ctx.buf_size, *bid, ctx.br_mask, 1);
 
    return 0;
 }
@@ -624,14 +629,14 @@ io_socket_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 int
 io_handle_event(struct io *io, struct io_uring_cqe *cqe)
 {
-   int fd;
-   int res_fd;
-   int event;
+   int fd = -1;
+   int res_fd = -1;
+   int event = -1;
    int ret = 0;
-   int entry_index;
-   void **buf;
-   int (*handler)(struct io *, struct io_uring_cqe *, void**, int*);
-   struct fd_entry *entry;
+   int entry_index = -1;
+   void *buf = NULL;
+   io_handler handler;
+   struct fd_entry *entry = NULL;
 
    struct user_data ud = io_decode_data(cqe);
 
@@ -648,17 +653,16 @@ io_handle_event(struct io *io, struct io_uring_cqe *cqe)
    int bid_start = bid;
    int bid_end = bid;
 
-   ret = handler(io, cqe, buf, &bid_end);
-
-
    fd = ud.fd;
-   res_fd = cqe->res;
    entry_index = io_table_lookup(io, fd);
    if (entry_index < 0)
    {
       fprintf(stderr, "io_handle_event\n");
       return 1;
    }
+
+
+   ret = handler(io, cqe, &buf, &bid_end);
 
    if (ret & CLOSE_FD)
    {
@@ -667,21 +671,56 @@ io_handle_event(struct io *io, struct io_uring_cqe *cqe)
       io->fd_table[entry_index].fd = -1;
       return 0;
    }
+   else if (ret & REPLENISH_BUFFERS)
+   {
+      printf("INFO: Replenish buffers triggered\n");
+      io_prepare_send(io, fd, buf, cqe->res);
+      io_prepare_receive(io, fd);
+      return 0;
+   }
    else if (ret)
    {
       fprintf(stderr, "io_handle_event: handler error\n");
       return 1;
    }
 
+   int count;
+   if (bid_end >= bid_start)
+   {
+      count = (bid_end - bid_start);
+   }
+   else
+   {
+      count = (bid_end + ctx.buf_count - bid_start);
+   }
+
+   res_fd = fd;
+   if (event == __ACCEPT)
+   {
+      res_fd = cqe->res;
+   }
+
+   int buf_len;
+   if (event == __RECEIVE)
+   {
+      buf_len = cqe->res;
+   }
+
+
    entry = &io->fd_table[entry_index];
    if (entry->callbacks[event])
    {
-      ret = entry->callbacks[event](io, res_fd, ret, buf);
+      ret = entry->callbacks[event](io->data, res_fd, ret, buf, buf_len);
    }
 
    if (buf)
    {
-      io_uring_buf_ring_advance(io->br.br, bid_end - bid_start + 1);
+      /* replenish buffers */
+      for (int i = bid_start; i != bid_end; i = (i + 1) & (ctx.buf_count - 1))
+      {
+         io_uring_buf_ring_add(io->in_br.br, (void*)io->in_br.br->bufs[bid].addr, ctx.buf_size, bid, ctx.br_mask, 0);
+      }
+      io_uring_buf_ring_advance(io->in_br.br, count);
    }
 
    return ret;
