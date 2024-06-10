@@ -9,15 +9,20 @@
 #include <string.h>
 
 #include "../io.h"
+#include "../utils.h"
 
 #define NUM_CLIENTS 1
 #define NUM_MESSAGES 50
+#define MESSAGE_LENGTH (1<<12)
 
 void send_message(int sock, int client, int message)
 {
-   char msg[256];
-   snprintf(msg, sizeof(msg), "Message %d from client %d\n", message, client);
-   if (send(sock, msg, strlen(msg), 0) < 0) {
+   char msg[MESSAGE_LENGTH];
+   int len = snprintf(msg, sizeof(msg), "Message %d from client %d\n", message, client);
+   memset(msg + len, 'A', sizeof(msg) - len - 1);
+   msg[sizeof(msg) - 1] = '8';
+   if (send(sock, msg, strlen(msg), 0) < 0)
+   {
       perror("send");
    }
 }
@@ -34,6 +39,7 @@ int main(int argc, char* argv[])
 
    printf("Starting tests for %d clients and %d messages\n", nr_clients, nr_messages);
 
+   const char * port = "8800";
    pid_t pid;
    int socket;
    for (int client = 1; client <= nr_clients; client++)
@@ -46,13 +52,12 @@ int main(int argc, char* argv[])
       }
       else if (pid == 0)
       {
+         socket = prepare_out_socket(port);
          for (int message = 1; message <= nr_messages; message++)
          {
             printf("From Client %d Sending Message %d\n", client, message);
-            socket = prepare_out_socket();
             send_message(socket, client, message);
-            close(socket);
-            sleep(4);
+            sleep(1);
          }
          exit(EXIT_SUCCESS);
       }
@@ -61,6 +66,12 @@ int main(int argc, char* argv[])
    for (int i = 0; i < NUM_CLIENTS; i++)
    {
       wait(NULL);
+   }
+
+   if (pid != 0)
+   {
+      int total_data = nr_clients * nr_messages * MESSAGE_LENGTH;
+      printf("Total bytes sent: %d\n", total_data);
    }
 
    return 0;

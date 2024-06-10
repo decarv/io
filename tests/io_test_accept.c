@@ -124,8 +124,8 @@ main(void)
 
    conn->io = main_io;
 
-   listening_socket = prepare_in_socket();
-   server_fd = prepare_out_socket();
+   listening_socket = prepare_in_socket("8800");
+   server_fd = prepare_out_socket("8801");
 
    conn->server_fd = server_fd;
 

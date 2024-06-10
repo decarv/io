@@ -66,6 +66,15 @@ int main() {
       exit(EXIT_FAILURE);
    }
 
+   int optval = 1;
+   int ret = setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+   if (ret < 0)
+   {
+      perror("setsockopt");
+      exit(EXIT_FAILURE);
+   }
+
+
    printf("Server is listening on port %d\n", PORT);
 
    while ((client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len)) >= 0)

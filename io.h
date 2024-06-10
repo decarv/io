@@ -26,6 +26,8 @@
 #define ALIGNMENT sysconf(_SC_PAGESIZE)
 #define BUFFER_SIZE (1 << 14) /* 4KiB */
 #define BUFFER_COUNT 8        /* 4KiB * 8 = 32 KiB */
+#define MAX_SIGNALS 32
+
 
 #define CONNECTIONS (1 << 16)
 #define EVENTS_NR 8
@@ -52,8 +54,10 @@ struct io;
 /*
  * Data needs to contain io and then be casted.
  */
-typedef int (*io_event_cb)(void* data, int fd, int err, void* buf, size_t buf_len);
 typedef int (*io_handler)(struct io *, struct io_uring_cqe *, void**, int*);
+typedef int (*io_event_cb)(void* data, int fd, int err, void* buf, size_t buf_len);
+typedef int (*_signal_event_cb)(int signum);
+
 
 struct io_configuration
 {
@@ -91,10 +95,21 @@ struct io_returned_buf {
     size_t len;
 };
 
+union callback {
+    io_event_cb event_cb;
+    _signal_event_cb signal_cb;
+};
+
 struct fd_entry {
     int fd;
-    io_event_cb callbacks[EVENTS_NR];
+    union callback callbacks[EVENTS_NR];
 };
+
+struct signal_entry {
+    int signum;
+    _signal_event_cb callback;
+};
+
 struct io {
 
    int id;
@@ -116,7 +131,9 @@ struct io {
 
    void* data;
 
+   sigset_t signal_mask;
 };
+
 
 struct user_data {
     union {
@@ -136,6 +153,14 @@ union io_sockaddr {
     struct sockaddr_in6 addr6;
 };
 
+enum {
+    __SIGTERM = 0,
+    __SIGHUP,
+    __SIGINT,
+    __SIGTRAP,
+    __SIGABRT,
+    __SIGALRM,
+};
 
 enum {
     __ACCEPT  = 0,
@@ -201,5 +226,7 @@ int io_setup_buffer_ring(struct io *io);
 int io_table_lookup(struct io *io, int fd);
 
 int io_next_entry(struct io* io);
+int io_signals_init(struct io *io);
+int io_register_signal(struct io *io, int signum, _signal_event_cb callback);
 
 #endif /* IO_H */

@@ -5,7 +5,7 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-int prepare_out_socket();
-int prepare_in_socket();
+int prepare_out_socket(const char*);
+int prepare_in_socket(const char*);
 
 #endif /* UTILS_H */

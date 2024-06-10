@@ -48,6 +48,8 @@
 #include <netdb.h>
 #include <err.h>
 #include <sys/mman.h>
+#include <signal.h>
+#include <sys/signalfd.h>
 
 /* io lib */
 #include "io.h"
@@ -95,10 +97,94 @@ io_get_entry(struct io* io, int fd)
       }
    }
 
+   if (free_entry < 0)
+   {
+      fprintf(stderr, "io_get_entry\n");
+      return free_entry;
+   }
+
    /* register fd */
    io->fd_table[free_entry].fd = fd;
 
    return free_entry;
+}
+
+int
+io_register_signal(struct io *io, int signum, _signal_event_cb callback)
+{
+   sigaddset(&io->signal_mask, signum);
+
+   struct fd_entry *entry = &io->fd_table[0]; /* signal fd is always the first */
+
+   switch (signum)
+   {
+      case SIGTERM:
+         entry->callbacks[__SIGTERM].signal_cb = callback;
+         break;
+      case SIGHUP:
+         entry->callbacks[__SIGHUP].signal_cb = callback;
+         break;
+      case SIGINT:
+         entry->callbacks[__SIGINT].signal_cb = callback;
+         break;
+      case SIGTRAP:
+         entry->callbacks[__SIGTRAP].signal_cb = callback;
+         break;
+      case SIGABRT:
+         entry->callbacks[__SIGABRT].signal_cb = callback;
+         break;
+      case SIGALRM:
+         entry->callbacks[__SIGALRM].signal_cb = callback;
+         break;
+      default:
+         fprintf(stderr, "No support for signal %d", signum);
+         return 1;
+   }
+
+   return 0;
+}
+
+int
+io_signals_init(struct io *io)
+{
+   int entry_index;
+
+   sigemptyset(&io->signal_mask);
+
+   if (sigprocmask(SIG_BLOCK, &io->signal_mask, NULL) == -1)
+   {
+      perror("sigprocmask");
+      return -1;
+   }
+
+   int signal_fd = signalfd(-1, &io->signal_mask, 0);
+   if (signal_fd == -1) {
+      perror("signalfd");
+      return -1;
+   }
+
+   entry_index = io_get_entry(io, signal_fd);
+   if (entry_index != 0)
+   {
+      fprintf(stderr, "io_initialize_signals: not supposed to happen\n");
+      exit(1);
+   }
+
+   return 0;
+}
+
+int io_signal_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int* bid)
+{
+   struct signalfd_siginfo fdsi;
+//   ssize_t s = read(cqe->fd, &fdsi, sizeof(struct signalfd_siginfo));
+//   if (s != sizeof(struct signalfd_siginfo)) {
+//      perror("read");
+//      return -1;
+//   }
+
+   int signum = fdsi.ssi_signo;
+   struct fd_entry *entry = &io->fd_table[0];
+   return entry->callbacks[signum].signal_cb(signum);
 }
 
 int
@@ -130,19 +216,19 @@ io_register_event(struct io *io, int fd, int event, io_event_cb callback, void* 
    if (event & ACCEPT)
    {
       io_prepare_accept(io, fd);
-      entry->callbacks[__ACCEPT] = callback;
+      entry->callbacks[__ACCEPT].event_cb = callback;
       registered++;
    }
    if (event & RECEIVE)
    {
       io_prepare_receive(io, fd);
-      entry->callbacks[__RECEIVE] = callback;
+      entry->callbacks[__RECEIVE].event_cb = callback;
       registered++;
    }
    if (event & SEND)
    {
       io_prepare_send(io, fd, buf, buf_len);
-      entry->callbacks[__SEND] = callback;
+      entry->callbacks[__SEND].event_cb = callback;
       registered++;
    }
 
@@ -258,6 +344,8 @@ io_init(struct io **io, void *data)
    }
 
    (*io)->data = data;
+
+   io_signals_init(*io);
 
    return 0;
 }
@@ -385,6 +473,8 @@ io_prepare_send(struct io *io, int fd, void *buf, size_t data_len)
 
    io_uring_prep_send(sqe, fd, buf, data_len, MSG_WAITALL | MSG_NOSIGNAL); /* TODO: why these flags? */
 
+
+
    io_encode_data(sqe, SEND, io->id, 0, fd);
 
    return 0;
@@ -445,6 +535,7 @@ io_loop(struct io *io) {
       }
 
       /* TODO: housekeeping ? */
+
 
    }
 
@@ -520,12 +611,6 @@ io_setup_buffer_ring(struct io *io)
 
 int
 io_accept_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
-{
-   return 0;
-}
-
-int
-io_signal_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 {
    return 0;
 }
@@ -675,6 +760,7 @@ io_handle_event(struct io *io, struct io_uring_cqe *cqe)
    {
       printf("INFO: Replenish buffers triggered\n");
       io_prepare_send(io, fd, buf, cqe->res);
+
       io_prepare_receive(io, fd);
       return 0;
    }
@@ -708,9 +794,9 @@ io_handle_event(struct io *io, struct io_uring_cqe *cqe)
 
 
    entry = &io->fd_table[entry_index];
-   if (entry->callbacks[event])
+   if (entry->callbacks[event].event_cb)
    {
-      ret = entry->callbacks[event](io->data, res_fd, ret, buf, buf_len);
+      ret = entry->callbacks[event].event_cb(io->data, res_fd, ret, buf, buf_len);
    }
 
    if (buf)
