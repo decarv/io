@@ -4,3 +4,4 @@ liburing/
 CMakeFiles/
 cmake-build-debug/
 Makefile
+out/

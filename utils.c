@@ -12,12 +12,13 @@
 /* io lib */
 #include "io.h"
 
-int prepare_out_socket(const char* port)
+int
+prepare_out_socket(const char* port)
 {
    int ret;
    int fd = -1;
    struct addrinfo hints;
-   struct addrinfo *res, *rp;
+   struct addrinfo* res, * rp;
 
    memset(&hints, 0, sizeof(hints));
    hints.ai_family = AF_UNSPEC;
@@ -65,7 +66,7 @@ prepare_in_socket(const char* port)
    int fd = -1;
    int ret = 0;
    struct addrinfo hints;
-   struct addrinfo *res;
+   struct addrinfo* res;
    memset(&hints, 0, sizeof(hints));
 
    hints.ai_family = AF_UNSPEC;

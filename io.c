@@ -59,25 +59,24 @@ static struct io_configuration ctx = { 0 };
 #define CLOSE_FD          1 << 1
 #define REPLENISH_BUFFERS 1 << 2
 
-
 /*
  * ACCEPT | RECEIVE
  */
 
 io_handler handlers[] =
 {
-    [__ACCEPT]  = io_accept_handler,
-    [__RECEIVE] = io_receive_handler,
-    [__SEND]    = io_send_handler,
-    [__SIGNAL]  = io_signal_handler,
-    [__SOCKET]  = io_socket_handler,
-    [__CONNECT] = io_connect_handler,
+   [__ACCEPT] = io_accept_handler,
+   [__RECEIVE] = io_receive_handler,
+   [__SEND] = io_send_handler,
+   [__SIGNAL] = io_signal_handler,
+   [__SOCKET] = io_socket_handler,
+   [__CONNECT] = io_connect_handler,
 };
 
 void
-next_bid(int *bid)
+next_bid(int* bid)
 {
-   *bid = ( *bid + 1 ) % ctx.buf_count;
+   *bid = (*bid + 1) % ctx.buf_count;
 }
 
 int
@@ -110,11 +109,11 @@ io_get_entry(struct io* io, int fd)
 }
 
 int
-io_register_signal(struct io *io, int signum, _signal_event_cb callback)
+io_register_signal(struct io* io, int signum, _signal_event_cb callback)
 {
    sigaddset(&io->signal_mask, signum);
 
-   struct fd_entry *entry = &io->fd_table[0]; /* signal fd is always the first */
+   struct fd_entry* entry = &io->fd_table[0]; /* signal fd is always the first */
 
    switch (signum)
    {
@@ -145,7 +144,7 @@ io_register_signal(struct io *io, int signum, _signal_event_cb callback)
 }
 
 int
-io_signals_init(struct io *io)
+io_signals_init(struct io* io)
 {
    int entry_index;
 
@@ -158,7 +157,8 @@ io_signals_init(struct io *io)
    }
 
    int signal_fd = signalfd(-1, &io->signal_mask, 0);
-   if (signal_fd == -1) {
+   if (signal_fd == -1)
+   {
       perror("signalfd");
       return -1;
    }
@@ -173,7 +173,8 @@ io_signals_init(struct io *io)
    return 0;
 }
 
-int io_signal_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int* bid)
+int
+io_signal_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int* bid)
 {
    struct signalfd_siginfo fdsi;
 //   ssize_t s = read(cqe->fd, &fdsi, sizeof(struct signalfd_siginfo));
@@ -183,23 +184,25 @@ int io_signal_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int* 
 //   }
 
    int signum = fdsi.ssi_signo;
-   struct fd_entry *entry = &io->fd_table[0];
+   struct fd_entry* entry = &io->fd_table[0];
    return entry->callbacks[signum].signal_cb(signum);
 }
 
 int
-io_register_event(struct io *io, int fd, int event, io_event_cb callback, void* buf, size_t buf_len)
+io_register_event(struct io* io, int fd, int event, io_event_cb callback, void* buf, size_t buf_len)
 {
    int ret = 0;
    int registered = 0;
-   struct fd_entry *entry = NULL;
+   struct fd_entry* entry = NULL;
    int entry_index = -1;
 
-   if (fd < 0) {
+   if (fd < 0)
+   {
       fprintf(stderr, "io_register_event: Invalid file descriptor: %d\n", fd);
       return 1;
    }
-   if (event < 0 || event >= EVENTS_NR) {
+   if (event < 0 || event >= EVENTS_NR)
+   {
       fprintf(stderr, "io_register_event: Invalid event number: %d\n", event);
       return 1;
    }
@@ -238,54 +241,55 @@ io_register_event(struct io *io, int fd, int event, io_event_cb callback, void* 
 }
 
 void
-io_encode_data(struct io_uring_sqe *sqe, uint8_t op, uint16_t id, uint16_t bid, uint16_t fd)
+io_encode_data(struct io_uring_sqe* sqe, uint8_t op, uint16_t id, uint16_t bid, uint16_t fd)
 {
    struct user_data ud = {
-           .op = op,
-           .id = id,
-           .bid = bid,
-           .fd = fd,
-           .rsv = 0,
+      .op = op,
+      .id = id,
+      .bid = bid,
+      .fd = fd,
+      .rsv = 0,
    };
    io_uring_sqe_set_data64(sqe, ud.as_u64);
 }
 
 struct
-user_data io_decode_data(struct io_uring_cqe *cqe)
+user_data
+io_decode_data(struct io_uring_cqe* cqe)
 {
    struct user_data ud = { .as_u64 = cqe->user_data };
    return ud;
 }
 
 int
-io_decode_op(struct io_uring_cqe *cqe)
+io_decode_op(struct io_uring_cqe* cqe)
 {
    struct user_data ud = { .as_u64 = cqe->user_data };
    return ud.op;
 }
 
 int
-io_cqe_to_bid(struct io_uring_cqe *cqe)
+io_cqe_to_bid(struct io_uring_cqe* cqe)
 {
    struct user_data ud = { .as_u64 = cqe->user_data };
    return ud.bid;
 }
 
 int
-io_prepare_connect(struct io *io, int fd, union io_sockaddr addr)
+io_prepare_connect(struct io* io, int fd, union io_sockaddr addr)
 {
    int ret;
-   struct io_uring_sqe *sqe = io_get_sqe(io);
+   struct io_uring_sqe* sqe = io_get_sqe(io);
 
    /* expects addr to be set correctly */
 
    if (ctx.ipv6)
    {
-      io_uring_prep_connect(sqe, fd, (struct sockaddr *) &addr.addr6, sizeof(struct sockaddr_in6));
+      io_uring_prep_connect(sqe, fd, (struct sockaddr*) &addr.addr6, sizeof(struct sockaddr_in6));
    }
    else
    {
-      io_uring_prep_connect(sqe, fd, (struct sockaddr *) &addr.addr4, sizeof(struct sockaddr_in));
+      io_uring_prep_connect(sqe, fd, (struct sockaddr*) &addr.addr4, sizeof(struct sockaddr_in));
    }
 
    io_encode_data(sqe, CONNECT, io->id, 0, fd);
@@ -294,9 +298,9 @@ io_prepare_connect(struct io *io, int fd, union io_sockaddr addr)
 }
 
 int
-io_prepare_socket(struct io *io)
+io_prepare_socket(struct io* io)
 {
-   struct io_uring_sqe *sqe = io_get_sqe(io);
+   struct io_uring_sqe* sqe = io_get_sqe(io);
    int domain;
    if (ctx.ipv6)
    {
@@ -312,13 +316,13 @@ io_prepare_socket(struct io *io)
 }
 
 int
-io_handle_socket(struct io *io, struct io_uring_cqe *cqe)
+io_handle_socket(struct io* io, struct io_uring_cqe* cqe)
 {
    return 1;
 }
 
 int
-io_init(struct io **io, void *data)
+io_init(struct io** io, void* data)
 {
    int ret;
 
@@ -373,7 +377,6 @@ io_context_setup(struct io_configuration_options config)
       exit(1);
    }
 
-
    /* setup params TODO: pull from opts */
 
    ctx.entries = (1 << 10);
@@ -382,7 +385,6 @@ io_context_setup(struct io_configuration_options config)
    ctx.params.flags |= IORING_SETUP_SINGLE_ISSUER; /* TODO: makes sense for pgagroal? */
    ctx.params.flags |= IORING_SETUP_CLAMP;
    ctx.params.flags |= IORING_SETUP_CQSIZE;
-
 
    /* default configuration */
 
@@ -418,10 +420,11 @@ io_context_setup(struct io_configuration_options config)
    return 0;
 }
 
-struct io_uring_sqe *io_get_sqe(struct io *io)
+struct io_uring_sqe*
+io_get_sqe(struct io* io)
 {
-   struct io_uring *ring = &io->ring;
-   struct io_uring_sqe *sqe;
+   struct io_uring* ring = &io->ring;
+   struct io_uring_sqe* sqe;
    do
    {
       sqe = io_uring_get_sqe(ring);
@@ -433,13 +436,14 @@ struct io_uring_sqe *io_get_sqe(struct io *io)
       {
          io_uring_sqring_wait(ring);
       }
-   } while (1);
+   }
+   while (1);
 }
 
 int
-io_prepare_accept(struct io *io, int fd)
+io_prepare_accept(struct io* io, int fd)
 {
-   struct io_uring_sqe *sqe = io_get_sqe(io);
+   struct io_uring_sqe* sqe = io_get_sqe(io);
 
    io_encode_data(sqe, __ACCEPT, io->id, io->bid, fd);
 
@@ -449,10 +453,10 @@ io_prepare_accept(struct io *io, int fd)
 }
 
 int
-io_prepare_receive(struct io *io, int fd)
+io_prepare_receive(struct io* io, int fd)
 {
    int ret;
-   struct io_uring_sqe *sqe = io_get_sqe(io);
+   struct io_uring_sqe* sqe = io_get_sqe(io);
    int bid = 0;
 
    io_uring_prep_recv_multishot(sqe, fd, NULL, 0, 0);
@@ -466,14 +470,12 @@ io_prepare_receive(struct io *io, int fd)
 }
 
 int
-io_prepare_send(struct io *io, int fd, void *buf, size_t data_len)
+io_prepare_send(struct io* io, int fd, void* buf, size_t data_len)
 {
    int res = 0;
-   struct io_uring_sqe *sqe = io_get_sqe(io);
+   struct io_uring_sqe* sqe = io_get_sqe(io);
 
    io_uring_prep_send(sqe, fd, buf, data_len, MSG_WAITALL | MSG_NOSIGNAL); /* TODO: why these flags? */
-
-
 
    io_encode_data(sqe, SEND, io->id, 0, fd);
 
@@ -481,23 +483,26 @@ io_prepare_send(struct io *io, int fd, void *buf, size_t data_len)
 }
 
 int
-io_loop(struct io *io) {
+io_loop(struct io* io)
+{
    struct __kernel_timespec active_ts, idle_ts;
    int flags;
    static int wait_usec = 1000000;
    idle_ts.tv_sec = 0;
    idle_ts.tv_nsec = 100000000LL;
    active_ts = idle_ts;
-   if (wait_usec > 1000000) {
+   if (wait_usec > 1000000)
+   {
       active_ts.tv_sec = wait_usec / 1000000;
       wait_usec -= active_ts.tv_sec * 1000000;
    }
    active_ts.tv_nsec = wait_usec * 1000;
 
    flags = 0;
-   while (1) {
-      struct __kernel_timespec *ts = &idle_ts;
-      struct io_uring_cqe *cqe;
+   while (1)
+   {
+      struct __kernel_timespec* ts = &idle_ts;
+      struct io_uring_cqe* cqe;
       unsigned int head;
       int ret, events, to_wait;
 
@@ -536,14 +541,13 @@ io_loop(struct io *io) {
 
       /* TODO: housekeeping ? */
 
-
    }
 
    return 0;
 }
 
 int
-io_cleanup(struct io *io)
+io_cleanup(struct io* io)
 {
    if (io)
    {
@@ -558,14 +562,14 @@ io_cleanup(struct io *io)
 }
 
 int
-io_setup_buffers(struct io *io)
+io_setup_buffers(struct io* io)
 {
    int ret;
    void* ptr;
 
    ret = io_setup_buffer_ring(io);
 
-   struct io_buf_ring *cbr = &io->in_br;
+   struct io_buf_ring* cbr = &io->in_br;
 
    if (ctx.use_huge)
    {
@@ -598,7 +602,7 @@ io_setup_buffers(struct io *io)
 }
 
 int
-io_setup_buffer_ring(struct io *io)
+io_setup_buffer_ring(struct io* io)
 {
    int ret;
 
@@ -610,32 +614,31 @@ io_setup_buffer_ring(struct io *io)
  */
 
 int
-io_accept_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
+io_accept_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int* bid)
 {
    return 0;
 }
 
 int
-io_connect_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
+io_connect_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int* bid)
 {
    return 0;
 }
 
 int
-io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** send_buf_base, int*bid)
+io_receive_handler(struct io* io, struct io_uring_cqe* cqe, void** send_buf_base, int* bid)
 {
    /*
     * If the buffer is too small it will overflow and apparently there is nothing we can do about it...
     */
-   struct io_buf_ring *iobr = &io->in_br;
-   *send_buf_base = (void *) (iobr->buf + *bid * ctx.buf_size);
-   struct io_uring_buf *buf;
-   void *data;
+   struct io_buf_ring* iobr = &io->in_br;
+   *send_buf_base = (void*) (iobr->buf + *bid * ctx.buf_size);
+   struct io_uring_buf* buf;
+   void* data;
    int pending_recv = 0;
    int this_bytes;
    int nr_packets = 0;
    int in_bytes;
-
 
    if (cqe->res == -ENOBUFS)
    {
@@ -663,7 +666,7 @@ io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** send_buf_base
    while (in_bytes)
    {
       buf = &(iobr->br->bufs[*bid]);
-      data = (char *) buf->addr;
+      data = (char*) buf->addr;
       this_bytes = buf->len;
       /* Break if the received bytes is smaller than buffer length.
        * Otherwise, continue iterating over the buffers.
@@ -687,7 +690,7 @@ io_receive_handler(struct io *io, struct io_uring_cqe *cqe, void** send_buf_base
 }
 
 int
-io_send_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
+io_send_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int* bid)
 {
    int ret;
    int fd;
@@ -699,7 +702,7 @@ io_send_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 }
 
 int
-io_socket_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
+io_socket_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int* bid)
 {
    int ret;
    int fd;
@@ -712,16 +715,16 @@ io_socket_handler(struct io *io, struct io_uring_cqe *cqe, void** buf, int*bid)
 }
 
 int
-io_handle_event(struct io *io, struct io_uring_cqe *cqe)
+io_handle_event(struct io* io, struct io_uring_cqe* cqe)
 {
    int fd = -1;
    int res_fd = -1;
    int event = -1;
    int ret = 0;
    int entry_index = -1;
-   void *buf = NULL;
+   void* buf = NULL;
    io_handler handler;
-   struct fd_entry *entry = NULL;
+   struct fd_entry* entry = NULL;
 
    struct user_data ud = io_decode_data(cqe);
 
@@ -745,7 +748,6 @@ io_handle_event(struct io *io, struct io_uring_cqe *cqe)
       fprintf(stderr, "io_handle_event\n");
       return 1;
    }
-
 
    ret = handler(io, cqe, &buf, &bid_end);
 
@@ -792,7 +794,6 @@ io_handle_event(struct io *io, struct io_uring_cqe *cqe)
       buf_len = cqe->res;
    }
 
-
    entry = &io->fd_table[entry_index];
    if (entry->callbacks[event].event_cb)
    {
@@ -813,7 +814,7 @@ io_handle_event(struct io *io, struct io_uring_cqe *cqe)
 }
 
 int
-io_table_lookup(struct io *io, int fd)
+io_table_lookup(struct io* io, int fd)
 {
    struct fd_entry* entry;
    for (int i = 0; i < FDS; i++)
