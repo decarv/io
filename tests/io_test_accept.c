@@ -1,6 +1,6 @@
 
-#include "../io.h"
-#include "../utils.h"
+#include "../include/io.h"
+#include "../include/utils.h"
 
 #define DATA_SIZE 1024
 
@@ -131,7 +131,7 @@ main(void)
 
    events = ACCEPT;
    io_register_event(main_io, listening_socket, events, accept_cb, NULL, 0);
-   io_loop(main_io);
+   ev_loop(main_io);
 
    return 0;
 }

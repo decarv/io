@@ -135,7 +135,9 @@ struct io
 
    void* data;
 
-   sigset_t signal_mask;
+   sigset_t signal_set;
+
+
 };
 
 struct user_data
@@ -176,6 +178,12 @@ enum {
    __CONNECT = 3,
    __SOCKET  = 4,
    __SIGNAL  = 5,
+   __SIGTERM = 6,
+   __SIGHUP  = 7,
+   __SIGINT  = 8,
+   __SIGTRAP = 9,
+   __SIGABRT = 10,
+   __SIGALRM = 11,
 };
 
 enum {
@@ -185,6 +193,12 @@ enum {
    CONNECT = 1 << __CONNECT,
    SOCKET  = 1 << __SOCKET,
    SIGNAL  = 1 << __SIGNAL,
+   SIGHUP,
+   SIGINT,
+   SIGTRAP,
+   SIGABRT,
+   SIGALRM,
+   SIGTERM,
 };
 
 /* Function Definitions */

@@ -111,7 +111,7 @@ io_get_entry(struct io* io, int fd)
 int
 io_register_signal(struct io* io, int signum, _signal_event_cb callback)
 {
-   sigaddset(&io->signal_mask, signum);
+   sigaddset(&io->signal_set, signum);
 
    struct fd_entry* entry = &io->fd_table[0]; /* signal fd is always the first */
 
@@ -143,50 +143,6 @@ io_register_signal(struct io* io, int signum, _signal_event_cb callback)
    return 0;
 }
 
-int
-io_signals_init(struct io* io)
-{
-   int entry_index;
-
-   sigemptyset(&io->signal_mask);
-
-   if (sigprocmask(SIG_BLOCK, &io->signal_mask, NULL) == -1)
-   {
-      perror("sigprocmask");
-      return -1;
-   }
-
-   int signal_fd = signalfd(-1, &io->signal_mask, 0);
-   if (signal_fd == -1)
-   {
-      perror("signalfd");
-      return -1;
-   }
-
-   entry_index = io_get_entry(io, signal_fd);
-   if (entry_index != 0)
-   {
-      fprintf(stderr, "io_initialize_signals: not supposed to happen\n");
-      exit(1);
-   }
-
-   return 0;
-}
-
-int
-io_signal_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int* bid)
-{
-   struct signalfd_siginfo fdsi;
-//   ssize_t s = read(cqe->fd, &fdsi, sizeof(struct signalfd_siginfo));
-//   if (s != sizeof(struct signalfd_siginfo)) {
-//      perror("read");
-//      return -1;
-//   }
-
-   int signum = fdsi.ssi_signo;
-   struct fd_entry* entry = &io->fd_table[0];
-   return entry->callbacks[signum].signal_cb(signum);
-}
 
 int
 io_register_event(struct io* io, int fd, int event, io_event_cb callback, void* buf, size_t buf_len)
@@ -234,6 +190,14 @@ io_register_event(struct io* io, int fd, int event, io_event_cb callback, void* 
       entry->callbacks[__SEND].event_cb = callback;
       registered++;
    }
+   if (event & SIGTERM)
+   {
+      io_prepare_signal(io, fd, SIGNAL);
+      entry->callbacks[__SIGNAL].event_cb = callback;
+   }
+
+
+
 
    ret = registered > 0 ? 0 : 1;
 
@@ -348,8 +312,6 @@ io_init(struct io** io, void* data)
    }
 
    (*io)->data = data;
-
-   io_signals_init(*io);
 
    return 0;
 }
