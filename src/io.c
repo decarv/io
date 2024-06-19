@@ -248,7 +248,6 @@ register_event(struct io* io, int fd, int events, union event_cb callback, void*
 //   }
 //}
 
-
 int
 periodic_init(double interval)
 {
@@ -337,8 +336,8 @@ int
 io_prepare_signal(struct io* io,int fd)
 {
    struct io_uring_sqe* sqe = io_get_sqe(io);
-   io_uring_prep_read_multishot(sqe,io->fd_table[0].fd, sizeof(io->siginfo),0, 0);
-   io_encode_data(sqe,__SIGNAL, io->id, io->bid, fd);
+   io_uring_prep_read_multishot(sqe,io->fd_table[0].fd,sizeof(io->siginfo),0,0);
+   io_encode_data(sqe,__SIGNAL,io->id,io->bid,fd);
    return 0;
 }
 
@@ -421,7 +420,6 @@ ev_init(struct io** ev_out,void* data)
    {
       ev->signal_table[i].signum = -1;
    }
-
 
    ev->data = data;
 
