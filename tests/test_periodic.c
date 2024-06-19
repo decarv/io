@@ -12,7 +12,7 @@ callback(void* data, int err)
    static double time = 0.0;
 
    time += 1.0;
-   printf("%lfs elapsed\n", time);
+   printf("Callback: %lfs elapsed\n", time);
    return 0;
 }
 
@@ -29,7 +29,7 @@ main(void)
       return 1;
    }
 
-   ret = io_init(&io, NULL);
+   ret = ev_init(&io, NULL);
    if (ret)
    {
       return 1;
@@ -39,7 +39,7 @@ main(void)
    {
       return 1;
    }
-   ret = io_register_event(io, fd, PERIODIC, (event_cb) callback, NULL, 0);
+   ret = register_event(io, fd, PERIODIC, (event_cb) callback, NULL, 0);
    if (ret)
    {
       fprintf(stderr, "error\n");

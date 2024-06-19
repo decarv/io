@@ -22,6 +22,7 @@
 #include <netdb.h>
 #include <err.h>
 #include <sys/mman.h>
+#include <sys/signalfd.h>
 
 #define ALIGNMENT sysconf(_SC_PAGESIZE)
 #define BUFFER_SIZE (1 << 14) /* 4KiB */
@@ -93,7 +94,7 @@ typedef int (*io_handler)(struct io*, struct io_uring_cqe*, void**, int*);
 /* Define a function pointer type for I/O callbacks */
 typedef int (*io_cb)(void* data, int fd, int err, void* buf, size_t buf_len);
 /* Define a function pointer type for signal callbacks */
-typedef int (*signal_cb)(int signum);
+typedef int (*signal_cb)(void* data, int err);
 /* Define a function pointer type for periodic callbacks */
 typedef int (*periodic_cb)(void* data, int err);
 
@@ -129,6 +130,8 @@ struct io_configuration
 
    int br_mask;
    struct io_uring_params params;
+
+   int pipe_fds[2];
 };
 
 struct io_buf_ring
@@ -156,11 +159,17 @@ struct signal_entry
    signal_cb callback;
 };
 
+struct ev_signal {
+   int pipe_fds[2];
+   int signum;
+};
+
 struct io
 {
 
    int id;
 
+   int signal_fd;
    struct fd_entry fd_table[FDS];
 
    struct io_uring ring;
@@ -178,11 +187,18 @@ struct io
 
    void* data;
 
-   sigset_t signal_set;
+   int monitored_signals[MAX_SIGNALS];
+   int signal_count;
+
+   int pipe_fds[2];
+
+   sigset_t sigset;
+
+   struct signal_entry signal_table[MAX_SIGNALS];
 
    uint64_t expirations;
+   struct signalfd_siginfo siginfo;
 
-   struct periodic* p;
 };
 
 struct user_data
@@ -217,7 +233,7 @@ struct periodic
 /* Function Definitions */
 
 /* TODO */
-int io_register_event(struct io* io, int fd, int events, event_cb callback, void* buf, size_t buf_len);
+int register_event(struct io* io, int fd, int events, event_cb callback, void* buf, size_t buf_len);
 /********/
 
 struct io* io_cqe_to_connection(struct io_uring_cqe* cqe);
@@ -238,7 +254,7 @@ int prepare_periodic(struct io* io, int fd);
 
 int io_start(struct io* main_io,int listening_socket);
 
-int io_init(struct io** io,void* data);
+int ev_init(struct io** io, void* data);
 int io_cleanup(struct io* io);
 int ev_loop(struct io* io);
 int io_register_fd(struct io* io,int fd);
@@ -264,9 +280,9 @@ int io_setup_buffer_ring(struct io* io);
 int io_table_lookup(struct io* io,int fd);
 
 int io_next_entry(struct io* io);
-int io_signals_init(struct io* io);
-int io_register_signal(struct io* io, int signum, signal_cb callback);
-
+int signal_init(struct io* io, int signum, signal_cb cb);
+int register_signal(struct io* io, int signum, signal_cb callback);
+int handle_signal(struct io* io, int signum);
 
 int register_periodic(struct io* io, struct periodic *p, void (*cb)(void), double interval);
 void periodic_start(struct periodic *p);
@@ -278,10 +294,10 @@ void periodic_start(struct periodic *p);
  */
 int periodic_init(double interval);
 
-inline bool
+bool
 is_periodic(int e);
 
-inline bool
+bool
 is_signal(int e);
 
 #endif /* IO_H */

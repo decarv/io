@@ -1,17 +1,71 @@
-//
-// Created by decarv on 6/17/24.
-//
 
-#include "../include/signals.h"
+#include <signals.h>
+#include <signal.h>
+#include <time.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <signal.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include "io.h"
+
+int
+callback(void* data, int signum)
+{
+   static int next = 0;
+   printf("%d\n", next++);
+   return 0;
+}
 
 
 int
 main(void)
 {
+   int ret;
+   double a, b, c;
+   struct io *io = NULL;
+   struct periodic p;
 
+   ret = io_context_setup((struct io_configuration_options) {0});
+   if (ret)
+   {
+      return 1;
+   }
 
+   ret = ev_init(&io, NULL);
+   if (ret)
+   {
+      return 1;
+   }
 
+   int fd = signal_init(io, SIGINT, callback);
+   if (fd < 0)
+   {
+      return 1;
+   }
 
+   pid_t pid = fork();
+   if (!pid) /* if child */
+   {
+      pid_t i = getpid();
+      printf("%d\n", i);
+      struct signalfd_siginfo fdsi;
 
-   return 0;
+      ev_loop(io);
+
+   }
+   else
+   {
+      do {
+         sleep(2);
+         if (kill(pid, SIGINT) == -1)
+         {
+            perror("kill");
+            return 1;
+         }
+         printf("Sent SIGINT to %d\n", pid);
+      } while (1);
+   }
+   return ret;
 }

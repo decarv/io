@@ -41,7 +41,7 @@ receive_cb(void *data, int recv_fd, int err, void* buf, size_t buf_len)
       send_fd = conn->client_fd;
    }
 
-   io_register_event(io, send_fd, SEND, NULL, buf, buf_len);
+   register_event(io, send_fd, SEND, NULL, buf, buf_len);
 
    return 0;
 }
@@ -90,7 +90,7 @@ accept_cb(void *data, int client_fd, int err, void* buf, size_t buf_len)
    conn->client_fd = client_fd;
 
    // Prepare to receive data from the client
-   io_register_event(io, client_fd, RECEIVE, receive_cb, NULL, 0);
+   register_event(io, client_fd, RECEIVE, (event_cb) receive_cb, NULL, 0);
 
    printf("Accepted connection, fd=%d\n", client_fd);
 
@@ -115,7 +115,7 @@ main(void)
       return 1;
    }
 
-   ret = io_init(&main_io, (void*) conn);
+   ret = ev_init(&main_io, (void*) conn);
    if (ret)
    {
       fprintf(stderr, "io_connection_setup\n");
@@ -130,7 +130,7 @@ main(void)
    conn->server_fd = server_fd;
 
    events = ACCEPT;
-   io_register_event(main_io, listening_socket, events, accept_cb, NULL, 0);
+   register_event(main_io, listening_socket, events, (event_cb) accept_cb, NULL, 0);
    ev_loop(main_io);
 
    return 0;

@@ -52,11 +52,13 @@
 #include <sys/signalfd.h>
 #include <sys/timerfd.h>
 #include <time.h>
+#include <sys/poll.h>
 
 /* io lib */
 #include "../include/io.h"
 
 static struct io_configuration ctx = { 0 };
+static int signal_fd;
 
 #define CLOSE_FD          1 << 1
 #define REPLENISH_BUFFERS 1 << 2
@@ -126,30 +128,42 @@ register_fd(struct io* io, int fd)
    return free_entry;
 }
 
-void signal_handler(int signum)
-{
-   write(ctx.pipe_fds[1], &signum, sizeof(signum));
-}
-
 int
-signal_init(struct io* io, int signum)
+signal_init(struct io* io, int signum, signal_cb cb)
 {
+   int fd;
+   int ret;
+   sigaddset(&io->sigset, signum);
 
-   struct sigaction sa;
-   io->monitored_signals[io->signal_count++] = signum;
-   sa.sa_handler = signal_handler;
-   sigemptyset(&sa.sa_mask);
-   sa.sa_flags = SA_RESTART;
-   if (sigaction(signum, &sa, NULL) == -1)
+   ret = sigprocmask(SIG_BLOCK, &io->sigset, NULL);
+   if (ret == -1)
    {
-      perror("sigaction");
+      fprintf(stdout, "sigprocmask\n");
       return 1;
    }
-   return 0;
+
+   for (int i = 0; i < MAX_SIGNALS; i++)
+   {
+      if (io->signal_table[i].signum == -1)
+      {
+         io->signal_table[i].signum = signum;
+         io->signal_table[i].callback = cb;
+         return 0;
+      }
+   }
+
+//   fd = signalfd(-1, &mask, 0);  /* TODO: SFD_NONBLOCK | SFD_CLOEXEC Flags? */
+//   if (fd == -1)
+//   {
+//      perror("signalfd");
+//      return -1;
+//   }
+
+   return 1;
 }
 
 int
-io_register_event(struct io* io, int fd, int event, union event_cb callback, void* buf, size_t buf_len)
+register_event(struct io* io, int fd, int events, union event_cb callback, void* buf, size_t buf_len)
 {
    int ret = 0;
    int registered = 0;
@@ -161,9 +175,9 @@ io_register_event(struct io* io, int fd, int event, union event_cb callback, voi
       fprintf(stderr, "io_register_event: Invalid file descriptor: %d\n", fd);
       return 1;
    }
-   if (event < 0 || event >= EVENTS_NR)
+   if (events < 0 || events >= EVENTS_NR)
    {
-      fprintf(stderr, "io_register_event: Invalid event number: %d\n", event);
+      fprintf(stderr, "io_register_event: Invalid event number: %d\n", events);
       return 1;
    }
 
@@ -176,31 +190,31 @@ io_register_event(struct io* io, int fd, int event, union event_cb callback, voi
 
    entry = &io->fd_table[entry_index];
 
-   if (event & ACCEPT)
+   if (events & ACCEPT)
    {
       io_prepare_accept(io, fd);
       entry->callbacks[__ACCEPT].io = callback.io;
       registered++;
    }
-   if (event & RECEIVE)
+   if (events & RECEIVE)
    {
       io_prepare_receive(io, fd);
       entry->callbacks[__RECEIVE].io = callback.io;
       registered++;
    }
-   if (event & SEND)
+   if (events & SEND)
    {
       io_prepare_send(io, fd, buf, buf_len);
       entry->callbacks[__SEND].io = callback.io;
       registered++;
    }
-   if (event & SIGNAL)
+   if (events & SIGNAL)
    {
       io_prepare_signal(io,fd);
       entry->callbacks[__SIGNAL].signal = callback.signal;
       registered++;
    }
-   if (event & PERIODIC)
+   if (events & PERIODIC)
    {
       prepare_periodic(io,fd);
       entry->callbacks[__PERIODIC].periodic = callback.periodic;
@@ -211,6 +225,29 @@ io_register_event(struct io* io, int fd, int event, union event_cb callback, voi
 
    return ret;
 }
+
+//int
+//register_signal(struct io* io, int signum, signal_cb cb)
+//{
+//   if (event & SIGNAL)
+//   {
+//      io_prepare_signal(io,fd);
+//      entry->callbacks[__SIGNAL].signal = callback.signal;
+//      registered++;
+//   }
+//}
+//
+//int
+//register_periodic()
+//{
+//   if (event & PERIODIC)
+//   {
+//      prepare_periodic(io,fd);
+//      entry->callbacks[__PERIODIC].periodic = callback.periodic;
+//      registered++;
+//   }
+//}
+
 
 int
 periodic_init(double interval)
@@ -291,8 +328,17 @@ io_prepare_read(struct io* io,int fd,int op)
 }
 
 int
+io_prepare_signal_read(struct io* io,int fd,int op)
+{
+   return 0;
+}
+
+int
 io_prepare_signal(struct io* io,int fd)
 {
+   struct io_uring_sqe* sqe = io_get_sqe(io);
+   io_uring_prep_read_multishot(sqe,io->fd_table[0].fd, sizeof(io->siginfo),0, 0);
+   io_encode_data(sqe,__SIGNAL, io->id, io->bid, fd);
    return 0;
 }
 
@@ -343,18 +389,21 @@ io_handle_socket(struct io* io,struct io_uring_cqe* cqe)
 }
 
 int
-io_init(struct io** io,void* data)
+ev_init(struct io** ev_out,void* data)
 {
    int ret;
+   struct io* ev;
 
-   *io = calloc(1,sizeof(struct io));
-   if (!*io)
+   *ev_out = calloc(1,sizeof(struct io));
+   if (!*ev_out)
    {
       fprintf(stderr,"io_init: calloc\n");
       return 1;
    }
 
-   ret = io_uring_queue_init_params(ctx.entries,&(*io)->ring,&ctx.params);
+   ev = *ev_out;
+
+   ret = io_uring_queue_init_params(ctx.entries,&ev->ring,&ctx.params);
    if (ret)
    {
       fprintf(stderr,"io_init: io_uring_queue_init_params: %s\n",strerror(-ret));
@@ -362,25 +411,31 @@ io_init(struct io** io,void* data)
       return 1;
    }
 
-   io_setup_buffers(*io);
+   io_setup_buffers(ev);
 
    for (int i = 0; i < FDS; i++)
    {
-      (*io)->fd_table[i].fd = -1;
+      ev->fd_table[i].fd = -1;
    }
-
-   (*io)->data = data;
-
-   if (pipe(ctx.pipe_fds) == -1)
+   for (int i = 0; i < MAX_SIGNALS; i++)
    {
-      perror("pipe");
-      return 1;
+      ev->signal_table[i].signum = -1;
    }
 
-   int flags = fcntl(ctx.pipe_fds[0], F_GETFL, 0);
-   fcntl(ctx.pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
 
-   io_prepare_read(*io, ctx.pipe_fds[0], __SIGNAL);
+   ev->data = data;
+
+   sigemptyset(&ev->sigset);
+//   if (pipe(ctx.pipe_fds) == -1)
+//   {
+//      perror("pipe");
+//      return 1;
+//   }
+//
+//   int flags = fcntl(ctx.pipe_fds[0], F_GETFL, 0);
+//   fcntl(ctx.pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
+//
+//   io_prepare_read(*io, ctx.pipe_fds[0], __SIGNAL);
 
    return 0;
 }
@@ -517,6 +572,8 @@ int
 ev_loop(struct io* io)
 {
    struct __kernel_timespec active_ts, idle_ts;
+   siginfo_t siginfo;
+   sigset_t pending;
    int flags;
    static int wait_usec = 1000000;
    idle_ts.tv_sec = 0;
@@ -572,9 +629,32 @@ ev_loop(struct io* io)
 
       /* TODO: housekeeping ? */
 
+      ret = sigwaitinfo(&io->sigset, &siginfo);
+      if (ret > 0)
+      {
+         ret = handle_signal(io, siginfo.si_signo);
+         if (ret)
+         {
+            fprintf(stderr, "Signal handler not found\n");
+            return 1;
+         }
+      }
    }
 
    return 0;
+}
+
+int
+handle_signal(struct io* io, int signum)
+{
+   for (int i = 0; i < MAX_SIGNALS; i++)
+   {
+      if (io->signal_table[i].signum == signum)
+      {
+         return io->signal_table[i].callback(io->data, signum);
+      }
+   }
+   return 1;
 }
 
 int
@@ -851,7 +931,7 @@ handle_event(struct io* io, struct io_uring_cqe* cqe)
    }
    else if (is_signal(event))
    {
-      ret = entry->callbacks[event].signal(0);
+      ret = entry->callbacks[event].signal(io->data, 0);
    }
    else
    {
