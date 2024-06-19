@@ -29,9 +29,44 @@
 #define MAX_SIGNALS 32
 
 #define CONNECTIONS (1 << 16)
-#define EVENTS_NR 8
 #define FDS 8
 #define LENGTH (1 << 20) /* 1 MiB */
+
+
+enum {
+    __SIGTERM = 0,
+    __SIGHUP,
+    __SIGINT,
+    __SIGTRAP,
+    __SIGABRT,
+    __SIGALRM,
+};
+
+enum {
+    __ACCEPT  = 0,
+    __RECEIVE = 1,
+    __SEND    = 2,
+    __CONNECT = 3,
+    __SOCKET  = 4,
+    __SIGNAL  = 5,
+    __PERIODIC= 6,
+    __READ    = 7,
+    __WRITE   = 8,
+    __EVENTS_NR = 9,
+};
+
+enum {
+    ACCEPT   = 1 << __ACCEPT,
+    RECEIVE  = 1 << __RECEIVE,
+    SEND     = 1 << __SEND,
+    CONNECT  = 1 << __CONNECT,
+    SOCKET   = 1 << __SOCKET,
+    SIGNAL   = 1 << __SIGNAL,
+    PERIODIC = 1 << __PERIODIC,
+    READ     = 1 << __READ,
+    WRITE    = 1 << __WRITE,
+    EVENTS_NR = 1 << __EVENTS_NR,
+};
 
 struct io_configuration_options
 {
@@ -54,8 +89,22 @@ struct io;
  * Data needs to contain io and then be casted.
  */
 typedef int (*io_handler)(struct io*, struct io_uring_cqe*, void**, int*);
-typedef int (*io_event_cb)(void* data, int fd, int err, void* buf, size_t buf_len);
-typedef int (*_signal_event_cb)(int signum);
+
+/* Define a function pointer type for I/O callbacks */
+typedef int (*io_cb)(void* data, int fd, int err, void* buf, size_t buf_len);
+/* Define a function pointer type for signal callbacks */
+typedef int (*signal_cb)(int signum);
+/* Define a function pointer type for periodic callbacks */
+typedef int (*periodic_cb)(void* data, int err);
+
+/* Define a union that can hold any of the above callback types */
+typedef union event_cb
+{
+   io_cb io;
+   signal_cb signal;
+   periodic_cb periodic;
+} event_cb;
+
 
 struct io_configuration
 {
@@ -95,24 +144,17 @@ struct io_returned_buf
    size_t len;
 };
 
-union callback
-{
-   io_event_cb event_cb;
-   _signal_event_cb signal_cb;
-};
-
 struct fd_entry
 {
    int fd;
-   union callback callbacks[EVENTS_NR];
+   event_cb callbacks[__EVENTS_NR];
 };
 
 struct signal_entry
 {
    int signum;
-   _signal_event_cb callback;
+   signal_cb callback;
 };
-
 struct io
 {
 
@@ -137,7 +179,9 @@ struct io
 
    sigset_t signal_set;
 
+   uint64_t expirations;
 
+   struct periodic* p;
 };
 
 struct user_data
@@ -162,49 +206,17 @@ union io_sockaddr
    struct sockaddr_in6 addr6;
 };
 
-enum {
-   __SIGTERM = 0,
-   __SIGHUP,
-   __SIGINT,
-   __SIGTRAP,
-   __SIGABRT,
-   __SIGALRM,
-};
-
-enum {
-   __ACCEPT  = 0,
-   __RECEIVE = 1,
-   __SEND    = 2,
-   __CONNECT = 3,
-   __SOCKET  = 4,
-   __SIGNAL  = 5,
-   __SIGTERM = 6,
-   __SIGHUP  = 7,
-   __SIGINT  = 8,
-   __SIGTRAP = 9,
-   __SIGABRT = 10,
-   __SIGALRM = 11,
-};
-
-enum {
-   ACCEPT  = 1 << __ACCEPT,
-   RECEIVE = 1 << __RECEIVE,
-   SEND    = 1 << __SEND,
-   CONNECT = 1 << __CONNECT,
-   SOCKET  = 1 << __SOCKET,
-   SIGNAL  = 1 << __SIGNAL,
-   SIGHUP,
-   SIGINT,
-   SIGTRAP,
-   SIGABRT,
-   SIGALRM,
-   SIGTERM,
+struct periodic
+{
+    double interval;
+    int fd;
+    void (*cb)(void);
 };
 
 /* Function Definitions */
 
 /* TODO */
-int io_register_event(struct io* io,int fd,int events,io_event_cb callback,void* buf,size_t buf_len);
+int io_register_event(struct io* io, int fd, int events, event_cb callback, void* buf, size_t buf_len);
 /********/
 
 struct io* io_cqe_to_connection(struct io_uring_cqe* cqe);
@@ -217,6 +229,9 @@ int io_prepare_accept(struct io* io,int fd);
 int io_prepare_receive(struct io* io,int fd);
 int io_prepare_send(struct io* io,int fd,void* buf,size_t data_len);
 int io_prepare_connect(struct io* io,int fd,union io_sockaddr addr);
+int io_prepare_signal(struct io* io, int fd);
+int io_prepare_read(struct io* io, int fd, int op);
+int prepare_periodic(struct io* io, int fd);
 
 //int io_prepare_socket(struct io_connection *io, char *host);
 
@@ -224,10 +239,10 @@ int io_start(struct io* main_io,int listening_socket);
 
 int io_init(struct io** io,void* data);
 int io_cleanup(struct io* io);
-int io_loop(struct io* io);
+int ev_loop(struct io* io);
 int io_register_fd(struct io* io,int fd);
 
-int io_handle_event(struct io* io,struct io_uring_cqe* cqe);
+int handle_event(struct io* io,struct io_uring_cqe* cqe);
 
 int io_send_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
 int io_receive_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
@@ -235,6 +250,7 @@ int io_accept_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
 int io_connect_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
 int io_socket_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
 int io_signal_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
+int periodic_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int*);
 
 void io_encode_data(struct io_uring_sqe* sqe,uint8_t op,uint16_t id,uint16_t bid,uint16_t fd);
 struct user_data io_decode_data(struct io_uring_cqe* cqe);
@@ -248,6 +264,23 @@ int io_table_lookup(struct io* io,int fd);
 
 int io_next_entry(struct io* io);
 int io_signals_init(struct io* io);
-int io_register_signal(struct io* io,int signum,_signal_event_cb callback);
+int io_register_signal(struct io* io, int signum, signal_cb callback);
+
+
+int register_periodic(struct io* io, struct periodic *p, void (*cb)(void), double interval);
+void periodic_start(struct periodic *p);
+
+/**
+ * Wrapper for timerfd_create and timerfd_settime to create interval timers.
+ * @param interval Double value representing the interval.
+ * @return File descriptor for timer_fd or -1 upon failure.
+ */
+int periodic_init(double interval);
+
+inline bool
+is_periodic(int e);
+
+inline bool
+is_signal(int e);
 
 #endif /* IO_H */

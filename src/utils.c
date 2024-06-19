@@ -10,7 +10,7 @@
 #include <netdb.h>
 
 /* io lib */
-#include "io.h"
+#include "../include/io.h"
 
 int
 prepare_out_socket(const char* port)

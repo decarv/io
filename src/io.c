@@ -50,9 +50,11 @@
 #include <sys/mman.h>
 #include <signal.h>
 #include <sys/signalfd.h>
+#include <sys/timerfd.h>
+#include <time.h>
 
 /* io lib */
-#include "io.h"
+#include "../include/io.h"
 
 static struct io_configuration ctx = { 0 };
 
@@ -71,7 +73,20 @@ io_handler handlers[] =
    [__SIGNAL] = io_signal_handler,
    [__SOCKET] = io_socket_handler,
    [__CONNECT] = io_connect_handler,
+   [__PERIODIC] = periodic_handler,
 };
+
+int
+io_signal_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int* x)
+{
+   return 0;
+}
+
+int
+periodic_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int* x)
+{
+   return 0;
+}
 
 void
 next_bid(int* bid)
@@ -79,8 +94,11 @@ next_bid(int* bid)
    *bid = (*bid + 1) % ctx.buf_count;
 }
 
+/**
+ * Stores
+ */
 int
-io_get_entry(struct io* io, int fd)
+register_fd(struct io* io, int fd)
 {
    int free_entry = -1;
    for (int i = 0; i < FDS; i++)
@@ -98,7 +116,7 @@ io_get_entry(struct io* io, int fd)
 
    if (free_entry < 0)
    {
-      fprintf(stderr, "io_get_entry\n");
+      fprintf(stderr, "register_fd\n");
       return free_entry;
    }
 
@@ -109,7 +127,7 @@ io_get_entry(struct io* io, int fd)
 }
 
 int
-io_register_signal(struct io* io, int signum, _signal_event_cb callback)
+io_register_signal(struct io* io, int signum, signal_cb callback)
 {
    sigaddset(&io->signal_set, signum);
 
@@ -118,22 +136,22 @@ io_register_signal(struct io* io, int signum, _signal_event_cb callback)
    switch (signum)
    {
       case SIGTERM:
-         entry->callbacks[__SIGTERM].signal_cb = callback;
+         entry->callbacks[__SIGTERM].signal = callback;
          break;
       case SIGHUP:
-         entry->callbacks[__SIGHUP].signal_cb = callback;
+         entry->callbacks[__SIGHUP].signal = callback;
          break;
       case SIGINT:
-         entry->callbacks[__SIGINT].signal_cb = callback;
+         entry->callbacks[__SIGINT].signal = callback;
          break;
       case SIGTRAP:
-         entry->callbacks[__SIGTRAP].signal_cb = callback;
+         entry->callbacks[__SIGTRAP].signal = callback;
          break;
       case SIGABRT:
-         entry->callbacks[__SIGABRT].signal_cb = callback;
+         entry->callbacks[__SIGABRT].signal = callback;
          break;
       case SIGALRM:
-         entry->callbacks[__SIGALRM].signal_cb = callback;
+         entry->callbacks[__SIGALRM].signal = callback;
          break;
       default:
          fprintf(stderr, "No support for signal %d", signum);
@@ -143,9 +161,8 @@ io_register_signal(struct io* io, int signum, _signal_event_cb callback)
    return 0;
 }
 
-
 int
-io_register_event(struct io* io, int fd, int event, io_event_cb callback, void* buf, size_t buf_len)
+io_register_event(struct io* io, int fd, int event, union event_cb callback, void* buf, size_t buf_len)
 {
    int ret = 0;
    int registered = 0;
@@ -163,7 +180,7 @@ io_register_event(struct io* io, int fd, int event, io_event_cb callback, void* 
       return 1;
    }
 
-   entry_index = io_get_entry(io, fd);
+   entry_index = register_fd(io, fd);
    if (entry_index < 0)
    {
       fprintf(stderr, "io_register_event: Not enough room for another fd\n");
@@ -175,37 +192,75 @@ io_register_event(struct io* io, int fd, int event, io_event_cb callback, void* 
    if (event & ACCEPT)
    {
       io_prepare_accept(io, fd);
-      entry->callbacks[__ACCEPT].event_cb = callback;
+      entry->callbacks[__ACCEPT].io = callback.io;
       registered++;
    }
    if (event & RECEIVE)
    {
       io_prepare_receive(io, fd);
-      entry->callbacks[__RECEIVE].event_cb = callback;
+      entry->callbacks[__RECEIVE].io = callback.io;
       registered++;
    }
    if (event & SEND)
    {
       io_prepare_send(io, fd, buf, buf_len);
-      entry->callbacks[__SEND].event_cb = callback;
+      entry->callbacks[__SEND].io = callback.io;
       registered++;
    }
-   if (event & SIGTERM)
+   if (event & SIGNAL)
    {
-      io_prepare_signal(io, fd, SIGNAL);
-      entry->callbacks[__SIGNAL].event_cb = callback;
+      io_prepare_signal(io,fd);
+      entry->callbacks[__SIGNAL].signal = callback.signal;
+      registered++;
    }
-
-
-
+   if (event & PERIODIC)
+   {
+      prepare_periodic(io,fd);
+      entry->callbacks[__PERIODIC].periodic = callback.periodic;
+      registered++;
+   }
 
    ret = registered > 0 ? 0 : 1;
 
    return ret;
 }
 
+int
+periodic_init(double interval)
+{
+   int fd;
+   struct itimerspec new_value;
+   memset(&new_value,0,sizeof(struct itimerspec));
+
+   fd = timerfd_create(CLOCK_MONOTONIC,0);
+   if (fd == -1)
+   {
+      perror("timerfd_create\n");
+      return 1;
+   }
+
+   new_value.it_interval.tv_sec = (int)interval;
+   new_value.it_interval.tv_nsec = (interval - (int)interval) * 1e9;
+   new_value.it_value.tv_sec = (int)interval;
+   new_value.it_value.tv_nsec = (interval - (int)interval) * 1e9;
+
+   if (timerfd_settime(fd,0,&new_value,NULL) == -1)
+   {
+      perror("timerfd_settime");
+      return -1;
+   }
+
+   return fd;
+}
+
+int
+prepare_periodic(struct io* io,int fd)
+{
+   return io_prepare_read(io,fd,__PERIODIC);
+}
+
 void
-io_encode_data(struct io_uring_sqe* sqe, uint8_t op, uint16_t id, uint16_t bid, uint16_t fd)
+io_encode_data(struct io_uring_sqe* sqe,uint8_t op,uint16_t id,uint16_t bid,uint16_t fd)
 {
    struct user_data ud = {
       .op = op,
@@ -214,7 +269,7 @@ io_encode_data(struct io_uring_sqe* sqe, uint8_t op, uint16_t id, uint16_t bid, 
       .fd = fd,
       .rsv = 0,
    };
-   io_uring_sqe_set_data64(sqe, ud.as_u64);
+   io_uring_sqe_set_data64(sqe,ud.as_u64);
 }
 
 struct
@@ -240,7 +295,22 @@ io_cqe_to_bid(struct io_uring_cqe* cqe)
 }
 
 int
-io_prepare_connect(struct io* io, int fd, union io_sockaddr addr)
+io_prepare_read(struct io* io,int fd,int op)
+{
+   struct io_uring_sqe* sqe = io_get_sqe(io);
+   io_uring_prep_read(sqe,fd,&io->expirations,sizeof(io->expirations),0);
+   io_encode_data(sqe,op,io->id,io->bid,fd);
+   return 0;
+}
+
+int
+io_prepare_signal(struct io* io,int fd)
+{
+   return 0;
+}
+
+int
+io_prepare_connect(struct io* io,int fd,union io_sockaddr addr)
 {
    int ret;
    struct io_uring_sqe* sqe = io_get_sqe(io);
@@ -249,14 +319,14 @@ io_prepare_connect(struct io* io, int fd, union io_sockaddr addr)
 
    if (ctx.ipv6)
    {
-      io_uring_prep_connect(sqe, fd, (struct sockaddr*) &addr.addr6, sizeof(struct sockaddr_in6));
+      io_uring_prep_connect(sqe,fd,(struct sockaddr*) &addr.addr6,sizeof(struct sockaddr_in6));
    }
    else
    {
-      io_uring_prep_connect(sqe, fd, (struct sockaddr*) &addr.addr4, sizeof(struct sockaddr_in));
+      io_uring_prep_connect(sqe,fd,(struct sockaddr*) &addr.addr4,sizeof(struct sockaddr_in));
    }
 
-   io_encode_data(sqe, CONNECT, io->id, 0, fd);
+   io_encode_data(sqe,CONNECT,io->id,0,fd);
 
    return 0;
 }
@@ -274,33 +344,34 @@ io_prepare_socket(struct io* io)
    {
       domain = AF_INET;
    }
-   io_uring_prep_socket(sqe, domain, SOCK_STREAM, 0, 0); /* TODO: WHAT CAN BE USED HERE ? */
-   io_encode_data(sqe, SOCKET, io->id, 0, 0);
+   io_uring_prep_socket(sqe,domain,SOCK_STREAM,0,0);     /* TODO: WHAT CAN BE USED HERE ? */
+   io_encode_data(sqe,SOCKET,io->id,0,0);
    return 0;
 }
 
 int
-io_handle_socket(struct io* io, struct io_uring_cqe* cqe)
+io_handle_socket(struct io* io,struct io_uring_cqe* cqe)
 {
    return 1;
 }
 
 int
-io_init(struct io** io, void* data)
+io_init(struct io** io,void* data)
 {
    int ret;
 
-   *io = calloc(1, sizeof(struct io));
+   *io = calloc(1,sizeof(struct io));
    if (!*io)
    {
-      fprintf(stderr, "io_init: calloc\n");
+      fprintf(stderr,"io_init: calloc\n");
       return 1;
    }
 
-   ret = io_uring_queue_init_params(ctx.entries, &(*io)->ring, &ctx.params);
+   ret = io_uring_queue_init_params(ctx.entries,&(*io)->ring,&ctx.params);
    if (ret)
    {
-      fprintf(stderr, "io_init: io_uring_queue_init_params: %s\n", strerror(-ret));
+      fprintf(stderr,"io_init: io_uring_queue_init_params: %s\n",strerror(-ret));
+      fprintf(stderr, "Make sure to setup context with io_context_setup\n");
       return 1;
    }
 
@@ -445,7 +516,7 @@ io_prepare_send(struct io* io, int fd, void* buf, size_t data_len)
 }
 
 int
-io_loop(struct io* io)
+ev_loop(struct io* io)
 {
    struct __kernel_timespec active_ts, idle_ts;
    int flags;
@@ -488,9 +559,9 @@ io_loop(struct io* io)
       events = 0;
       io_uring_for_each_cqe(&(io->ring), head, cqe)
       {
-         if (io_handle_event(io, cqe))
+         if (handle_event(io, cqe))
          {
-            fprintf(stderr, "io_loop: io_handle_event\n");
+            fprintf(stderr, "ev_loop: io_handle_event\n");
             return 1;
          }
          events++;
@@ -590,9 +661,6 @@ io_connect_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int* bid
 int
 io_receive_handler(struct io* io, struct io_uring_cqe* cqe, void** send_buf_base, int* bid)
 {
-   /*
-    * If the buffer is too small it will overflow and apparently there is nothing we can do about it...
-    */
    struct io_buf_ring* iobr = &io->in_br;
    *send_buf_base = (void*) (iobr->buf + *bid * ctx.buf_size);
    struct io_uring_buf* buf;
@@ -676,8 +744,20 @@ io_socket_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int* bid)
    return 0;
 }
 
+bool
+is_periodic(int e)
+{
+   return (e == __PERIODIC);
+}
+
+bool
+is_signal(int e)
+{
+   return (e == __SIGNAL);
+}
+
 int
-io_handle_event(struct io* io, struct io_uring_cqe* cqe)
+handle_event(struct io* io, struct io_uring_cqe* cqe)
 {
    int fd = -1;
    int res_fd = -1;
@@ -691,6 +771,7 @@ io_handle_event(struct io* io, struct io_uring_cqe* cqe)
    struct user_data ud = io_decode_data(cqe);
 
    event = ud.op;
+   fd = ud.fd;
 
    handler = handlers[event];
    if (!handler)
@@ -703,7 +784,6 @@ io_handle_event(struct io* io, struct io_uring_cqe* cqe)
    int bid_start = bid;
    int bid_end = bid;
 
-   fd = ud.fd;
    entry_index = io_table_lookup(io, fd);
    if (entry_index < 0)
    {
@@ -757,9 +837,28 @@ io_handle_event(struct io* io, struct io_uring_cqe* cqe)
    }
 
    entry = &io->fd_table[entry_index];
-   if (entry->callbacks[event].event_cb)
+
+   if (is_periodic(event))
    {
-      ret = entry->callbacks[event].event_cb(io->data, res_fd, ret, buf, buf_len);
+      ret = entry->callbacks[event].periodic(io->data, 0);
+      if (ret)
+      {
+         fprintf(stderr, "handle_event: callback[event].periodic\n");
+         return 1;
+      }
+
+      /* rearm periodic and exit */
+      prepare_periodic(io, fd);
+      return 0;
+   }
+   else if (is_signal(event))
+   {
+
+      ret = entry->callbacks[event].signal(entry->fd);
+   }
+   else
+   {
+      ret = entry->callbacks[event].io(io->data, res_fd, ret, buf, buf_len);
    }
 
    if (buf)
