@@ -126,38 +126,25 @@ register_fd(struct io* io, int fd)
    return free_entry;
 }
 
-int
-io_register_signal(struct io* io, int signum, signal_cb callback)
+void signal_handler(int signum)
 {
-   sigaddset(&io->signal_set, signum);
+   write(ctx.pipe_fds[1], &signum, sizeof(signum));
+}
 
-   struct fd_entry* entry = &io->fd_table[0]; /* signal fd is always the first */
+int
+signal_init(struct io* io, int signum)
+{
 
-   switch (signum)
+   struct sigaction sa;
+   io->monitored_signals[io->signal_count++] = signum;
+   sa.sa_handler = signal_handler;
+   sigemptyset(&sa.sa_mask);
+   sa.sa_flags = SA_RESTART;
+   if (sigaction(signum, &sa, NULL) == -1)
    {
-      case SIGTERM:
-         entry->callbacks[__SIGTERM].signal = callback;
-         break;
-      case SIGHUP:
-         entry->callbacks[__SIGHUP].signal = callback;
-         break;
-      case SIGINT:
-         entry->callbacks[__SIGINT].signal = callback;
-         break;
-      case SIGTRAP:
-         entry->callbacks[__SIGTRAP].signal = callback;
-         break;
-      case SIGABRT:
-         entry->callbacks[__SIGABRT].signal = callback;
-         break;
-      case SIGALRM:
-         entry->callbacks[__SIGALRM].signal = callback;
-         break;
-      default:
-         fprintf(stderr, "No support for signal %d", signum);
-         return 1;
+      perror("sigaction");
+      return 1;
    }
-
    return 0;
 }
 
@@ -383,6 +370,17 @@ io_init(struct io** io,void* data)
    }
 
    (*io)->data = data;
+
+   if (pipe(ctx.pipe_fds) == -1)
+   {
+      perror("pipe");
+      return 1;
+   }
+
+   int flags = fcntl(ctx.pipe_fds[0], F_GETFL, 0);
+   fcntl(ctx.pipe_fds[0], F_SETFL, flags | O_NONBLOCK);
+
+   io_prepare_read(*io, ctx.pipe_fds[0], __SIGNAL);
 
    return 0;
 }
@@ -795,7 +793,7 @@ handle_event(struct io* io, struct io_uring_cqe* cqe)
 
    if (ret & CLOSE_FD)
    {
-      // clean entry
+      /* clean entry */
       close(fd);
       io->fd_table[entry_index].fd = -1;
       return 0;
@@ -853,8 +851,7 @@ handle_event(struct io* io, struct io_uring_cqe* cqe)
    }
    else if (is_signal(event))
    {
-
-      ret = entry->callbacks[event].signal(entry->fd);
+      ret = entry->callbacks[event].signal(0);
    }
    else
    {

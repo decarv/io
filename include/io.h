@@ -155,6 +155,7 @@ struct signal_entry
    int signum;
    signal_cb callback;
 };
+
 struct io
 {
 
