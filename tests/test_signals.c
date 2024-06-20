@@ -1,5 +1,4 @@
 
-#include <signals.h>
 #include <signal.h>
 #include <time.h>
 #include <stdio.h>

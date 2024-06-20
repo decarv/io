@@ -1,21 +1,28 @@
 BIN_DIR="./out"
 
 echo "Building server"
-gcc -o out/server server.c
+gcc -I ../include -o out/test_io_server test_io_server.c
 
 echo "Building test_libev"
-gcc -o out/test_libev test_libev.c -lev
+gcc -I ../include -o out/test_libev test_libev.c -lev
 
-echo "Building io_test_accept"
-gcc -o out/io_test_accept io_test_accept.c ../src/utils.c ../src/io.c -lev -luring
+echo "Building test_io_proxy"
+gcc -I ../include -o out/test_io_proxy test_io_proxy.c ../src/utils.c ../src/io.c -lev -luring
 
-echo "Building io_test_client"
-gcc -o out/io_test_client io_test_client.c ../src/utils.c -luring
+echo "Building test_io_client"
+gcc -I ../include -o out/test_io_client test_io_client.c ../src/utils.c -luring
+echo "Built."
 
-echo "Building io_test_client"
-gcc -o out/io_test_client io_test_client.c ../src/utils.c -luring
+echo "Building test_io_client"
+gcc -I ../include -o out/test_io_client test_io_client.c ../src/utils.c -luring
+echo "Built."
 
 echo "Building test_periodic"
-gcc -o out/test_periodic test_periodic.c ../src/utils.c ../src/periodic.c ../src/io.c -lev -luring
+gcc -I ../include -o out/test_periodic test_periodic.c ../src/utils.c ../src/periodic.c ../src/io.c -lev -luring
+echo "Built."
+
+echo "Building test_signals"
+gcc -I ../include -o out/test_signals test_signals.c ../src/utils.c ../src/periodic.c ../src/io.c -lev -luring
+echo "Built."
 
 echo "Done."

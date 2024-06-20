@@ -55,9 +55,8 @@ int main(int argc, char* argv[])
          socket = prepare_out_socket(port);
          for (int message = 1; message <= nr_messages; message++)
          {
-            printf("From Client %d Sending Message %d\n", client, message);
             send_message(socket, client, message);
-            sleep(1);
+            usleep(10);
          }
          exit(EXIT_SUCCESS);
       }
@@ -71,7 +70,7 @@ int main(int argc, char* argv[])
    if (pid != 0)
    {
       int total_data = nr_clients * nr_messages * MESSAGE_LENGTH;
-      printf("Total bytes sent: %d\n", total_data);
+      printf("%d\n", total_data);
    }
 
    return 0;

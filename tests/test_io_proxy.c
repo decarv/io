@@ -41,7 +41,9 @@ receive_cb(void *data, int recv_fd, int err, void* buf, size_t buf_len)
       send_fd = conn->client_fd;
    }
 
-   register_event(io, send_fd, SEND, NULL, buf, buf_len);
+   union event_cb callback;
+   callback.io = NULL;
+   register_event(io, send_fd, SEND, callback, buf, buf_len);
 
    return 0;
 }
@@ -87,12 +89,15 @@ accept_cb(void *data, int client_fd, int err, void* buf, size_t buf_len)
    cw->total_received = 0;
    cw->fd = client_fd;
 
-   conn->client_fd = client_fd;
-
-   // Prepare to receive data from the client
-   register_event(io, client_fd, RECEIVE, (event_cb) receive_cb, NULL, 0);
-
-   printf("Accepted connection, fd=%d\n", client_fd);
+   pid_t pid = fork();
+   if (!pid)
+   {
+      struct connection *conn_ch = malloc(sizeof(struct connection));
+      struct io *io_ch = NULL;
+      ev_init(&io_ch, conn_ch);
+      conn_ch->client_fd = client_fd;
+      register_event(io_ch, client_fd, RECEIVE, (event_cb) receive_cb, NULL, 0);
+   }
 
    return 0;
 }
