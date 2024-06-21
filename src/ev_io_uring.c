@@ -4,35 +4,6 @@
  * This code is based on: https://git.kernel.dk/cgit/liburing/tree/examples/proxy.c
  * (C) 2024 Jens Axboe <axboe@kernel.dk>
  *
- *
- *
- *
- * TODO:
- *  - Replace the following functionality (from pgagroal):
- *       if (config->idle_timeout > 0)
- *       {
- *          ev_periodic_init (&idle_timeout, idle_timeout_cb, 0.,
- *                            MAX(1. * config->idle_timeout / 2., 5.), 0);
- *          ev_periodic_start (main_loop, &idle_timeout);
- *       }
- *       if (config->max_connection_age > 0)
- *       {
- *          ev_periodic_init (&max_connection_age, max_connection_age_cb, 0.,
- *                            MAX(1. * config->max_connection_age / 2., 5.), 0);
- *          ev_periodic_start (main_loop, &max_connection_age);
- *       }
- *       if (config->validation == VALIDATION_BACKGROUND)
- *       {
- *          ev_periodic_init (&validation, validation_cb, 0.,
- *                            MAX(1. * config->background_interval, 5.), 0);
- *          ev_periodic_start (main_loop, &validation);
- *       }
- *       if (config->disconnect_client > 0)
- *       {
- *          ev_periodic_init (&disconnect_client, disconnect_client_cb, 0.,
- *                            MIN(300., MAX(1. * config->disconnect_client / 2., 1.)), 0);
- *          ev_periodic_start (main_loop, &disconnect_client);
- *       }
  */
 
 /* system */
@@ -42,20 +13,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <liburing.h>
-#include <fcntl.h>
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include <err.h>
-#include <sys/mman.h>
 #include <signal.h>
-#include <sys/signalfd.h>
 #include <sys/timerfd.h>
 #include <time.h>
 #include <sys/poll.h>
 
 /* io lib */
-#include "../include/io.h"
+#include "../include/ev_io_uring.h"
 
 static struct io_configuration ctx = { 0 };
 static int signal_fd;
@@ -163,7 +129,7 @@ signal_init(struct io* io, int signum, signal_cb cb)
 }
 
 int
-register_event(struct io* io, int fd, int events, union event_cb callback, void* buf, size_t buf_len)
+register_event(struct io* io, int fd, int event, union event_cb callback, void* buf, size_t buf_len)
 {
    int ret = 0;
    int registered = 0;
@@ -175,9 +141,9 @@ register_event(struct io* io, int fd, int events, union event_cb callback, void*
       fprintf(stderr, "io_register_event: Invalid file descriptor: %d\n", fd);
       return 1;
    }
-   if (events < 0 || events >= EVENTS_NR)
+   if (event < 0 || event >= EVENTS_NR)
    {
-      fprintf(stderr, "io_register_event: Invalid event number: %d\n", events);
+      fprintf(stderr, "io_register_event: Invalid event number: %d\n", event);
       return 1;
    }
 
@@ -190,63 +156,34 @@ register_event(struct io* io, int fd, int events, union event_cb callback, void*
 
    entry = &io->fd_table[entry_index];
 
-   if (events & ACCEPT)
+   switch (event)
    {
-      io_prepare_accept(io, fd);
-      entry->callbacks[__ACCEPT].io = callback.io;
-      registered++;
-   }
-   if (events & RECEIVE)
-   {
-      io_prepare_receive(io, fd);
-      entry->callbacks[__RECEIVE].io = callback.io;
-      registered++;
-   }
-   if (events & SEND)
-   {
-      io_prepare_send(io, fd, buf, buf_len);
-      entry->callbacks[__SEND].io = callback.io;
-      registered++;
-   }
-   if (events & SIGNAL)
-   {
-      io_prepare_signal(io,fd);
-      entry->callbacks[__SIGNAL].signal = callback.signal;
-      registered++;
-   }
-   if (events & PERIODIC)
-   {
-      prepare_periodic(io,fd);
-      entry->callbacks[__PERIODIC].periodic = callback.periodic;
-      registered++;
+      case ACCEPT:
+         io_prepare_accept(io, fd);
+         entry->callbacks[__ACCEPT].io = callback.io;
+         break;
+      case RECEIVE:
+         io_prepare_receive(io, fd);
+         entry->callbacks[__RECEIVE].io = callback.io;
+         break;
+      case SEND:
+         io_prepare_send(io, fd, buf, buf_len);
+         entry->callbacks[__SEND].io = callback.io;
+         break;
+      case PERIODIC:
+         prepare_periodic(io, fd);
+         entry->callbacks[__PERIODIC].periodic = callback.periodic;
+         break;
+      case SIGNAL:
+//         io_prepare_signal(io, fd);
+         entry->callbacks[__SIGNAL].signal = callback.signal;
+         break;
+      default:
+         return 1;
    }
 
-   ret = registered > 0 ? 0 : 1;
-
-   return ret;
+   return 0;
 }
-
-//int
-//register_signal(struct io* io, int signum, signal_cb cb)
-//{
-//   if (event & SIGNAL)
-//   {
-//      io_prepare_signal(io,fd);
-//      entry->callbacks[__SIGNAL].signal = callback.signal;
-//      registered++;
-//   }
-//}
-//
-//int
-//register_periodic()
-//{
-//   if (event & PERIODIC)
-//   {
-//      prepare_periodic(io,fd);
-//      entry->callbacks[__PERIODIC].periodic = callback.periodic;
-//      registered++;
-//   }
-//}
 
 int
 periodic_init(double interval)
@@ -323,21 +260,6 @@ io_prepare_read(struct io* io,int fd,int op)
    struct io_uring_sqe* sqe = io_get_sqe(io);
    io_uring_prep_read(sqe,fd,&io->expirations,sizeof(io->expirations),0);
    io_encode_data(sqe,op,io->id,io->bid,fd);
-   return 0;
-}
-
-int
-io_prepare_signal_read(struct io* io,int fd,int op)
-{
-   return 0;
-}
-
-int
-io_prepare_signal(struct io* io,int fd)
-{
-   struct io_uring_sqe* sqe = io_get_sqe(io);
-   io_uring_prep_read_multishot(sqe,io->fd_table[0].fd,sizeof(io->siginfo),0,0);
-   io_encode_data(sqe,__SIGNAL,io->id,io->bid,fd);
    return 0;
 }
 

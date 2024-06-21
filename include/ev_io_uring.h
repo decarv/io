@@ -27,13 +27,14 @@
 #define ALIGNMENT sysconf(_SC_PAGESIZE)
 #define BUFFER_SIZE (1 << 14) /* 4KiB */
 #define BUFFER_COUNT 8        /* 4KiB * 8 = 32 KiB */
-#define MAX_SIGNALS 32
 
-#define CONNECTIONS (1 << 16)
 #define FDS 8
-#define LENGTH (1 << 20) /* 1 MiB */
+#define MISC_LENGTH (1 << 20) /* 1 MiB */
+#define MAX_SIGNALS  8
 
-
+/**
+ *
+ */
 enum {
     __SIGTERM = 0,
     __SIGHUP,
