@@ -31,6 +31,7 @@
 #define FDS 8
 #define MISC_LENGTH (1 << 20) /* 1 MiB */
 #define MAX_SIGNALS  8
+#define MAX_PERIODIC 8
 
 /**
  *
@@ -51,7 +52,7 @@ enum {
     __CONNECT = 3,
     __SOCKET  = 4,
     __SIGNAL  = 5,
-    __PERIODIC= 6,
+    OP_PERIODIC= 6,
     __READ    = 7,
     __WRITE   = 8,
     __EVENTS_NR = 9,
@@ -64,7 +65,7 @@ enum {
     CONNECT  = 1 << __CONNECT,
     SOCKET   = 1 << __SOCKET,
     SIGNAL   = 1 << __SIGNAL,
-    PERIODIC = 1 << __PERIODIC,
+    PERIODIC = 1 << OP_PERIODIC,
     READ     = 1 << __READ,
     WRITE    = 1 << __WRITE,
     EVENTS_NR = 1 << __EVENTS_NR,
@@ -85,12 +86,12 @@ struct io_configuration_options
    int buf_size;
 };
 
-struct io;
+struct ev;
 
 /*
  * Data needs to contain io and then be casted.
  */
-typedef int (*io_handler)(struct io*, struct io_uring_cqe*, void**, int*);
+typedef int (*io_handler)(struct ev*, struct io_uring_cqe*, void**, int*);
 
 /* Define a function pointer type for I/O callbacks */
 typedef int (*io_cb)(void* data, int fd, int err, void* buf, size_t buf_len);
@@ -108,7 +109,7 @@ typedef union event_cb
 } event_cb;
 
 
-struct io_configuration
+struct ev_context
 {
    int entries;
 
@@ -142,12 +143,6 @@ struct io_buf_ring
    int bgid;
 };
 
-struct io_returned_buf
-{
-   void** buf;
-   size_t len;
-};
-
 struct fd_entry
 {
    int fd;
@@ -165,7 +160,7 @@ struct ev_signal {
    int signum;
 };
 
-struct io
+struct ev
 {
 
    int id;
@@ -197,6 +192,10 @@ struct io
 
    struct signal_entry signal_table[MAX_SIGNALS];
 
+
+   int periodic_count;
+   struct __kernel_timespec ts[MAX_PERIODIC];
+
    uint64_t expirations;
    struct signalfd_siginfo siginfo;
 
@@ -208,7 +207,7 @@ struct user_data
    {
       struct
       {
-         uint8_t op;
+         uint8_t event;
          uint16_t id;     /* connection id */
          uint16_t bid;    /* buffer index */
          uint16_t fd;
@@ -233,67 +232,71 @@ struct periodic
 
 /* Function Definitions */
 
-/* TODO */
-int register_event(struct io* io, int fd, int events, event_cb callback, void* buf, size_t buf_len);
-/********/
+int register_event(struct ev* io, int fd, int event, event_cb callback, void* buf, size_t buf_len);
 
-struct io* io_cqe_to_connection(struct io_uring_cqe* cqe);
+struct ev* io_cqe_to_connection(struct io_uring_cqe* cqe);
 int io_cqe_to_bid(struct io_uring_cqe* cqe);
-struct io_uring_sqe*io_get_sqe(struct io* io);
+struct io_uring_sqe*io_get_sqe(struct ev* io);
 
 int io_context_setup(struct io_configuration_options config);
 
-int io_prepare_accept(struct io* io,int fd);
-int io_prepare_receive(struct io* io,int fd);
-int io_prepare_send(struct io* io,int fd,void* buf,size_t data_len);
-int io_prepare_connect(struct io* io,int fd,union io_sockaddr addr);
-int io_prepare_signal(struct io* io, int fd);
-int io_prepare_read(struct io* io, int fd, int op);
-int prepare_periodic(struct io* io, int fd);
+int io_prepare_accept(struct ev* io,int fd);
+int io_prepare_receive(struct ev* io,int fd);
+int io_prepare_send(struct ev* io,int fd,void* buf,size_t data_len);
+int io_prepare_connect(struct ev* io,int fd,union io_sockaddr addr);
+int io_prepare_signal(struct ev* io, int fd);
+int io_prepare_read(struct ev* io, int fd, int op);
+int prepare_periodic(struct ev* io, int fd);
 
 //int io_prepare_socket(struct io_connection *io, char *host);
 
-int io_start(struct io* main_io,int listening_socket);
+int io_start(struct ev* main_io,int listening_socket);
 
-int ev_init(struct io** io, void* data);
-int io_cleanup(struct io* io);
-int ev_loop(struct io* io);
-int io_register_fd(struct io* io,int fd);
+int ev_init(struct ev** io, void* data);
+int io_cleanup(struct ev* io);
+int ev_loop(struct ev* io);
+int io_register_fd(struct ev* io,int fd);
 
-int handle_event(struct io* io,struct io_uring_cqe* cqe);
+int handle_event(struct ev* io,struct io_uring_cqe* cqe);
 
-int io_send_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
-int io_receive_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
-int io_accept_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
-int io_connect_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
-int io_socket_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
-int io_signal_handler(struct io* io,struct io_uring_cqe* cqe,void** buf,int*);
-int periodic_handler(struct io* io, struct io_uring_cqe* cqe, void** buf, int*);
+int io_send_handler(struct ev* io,struct io_uring_cqe* cqe,void** buf,int*);
+int io_receive_handler(struct ev* io,struct io_uring_cqe* cqe,void** buf,int*);
+int io_accept_handler(struct ev* io,struct io_uring_cqe* cqe,void** buf,int*);
+int io_connect_handler(struct ev* io,struct io_uring_cqe* cqe,void** buf,int*);
+int io_socket_handler(struct ev* io,struct io_uring_cqe* cqe,void** buf,int*);
+int io_signal_handler(struct ev* io,struct io_uring_cqe* cqe,void** buf,int*);
+int periodic_handler(struct ev* io, struct io_uring_cqe* cqe, void** buf, int*);
 
-void io_encode_data(struct io_uring_sqe* sqe,uint8_t op,uint16_t id,uint16_t bid,uint16_t fd);
-struct user_data io_decode_data(struct io_uring_cqe* cqe);
+void encode_user_data(struct io_uring_sqe* sqe, uint8_t event, uint16_t id, uint16_t bid, uint16_t fd);
+struct user_data decode_user_data(struct io_uring_cqe* cqe);
 
-int io_recv_ring_setup(struct io* io);
-int io_setup_send_ring(struct io* io);
-int io_setup_buffers(struct io* io);
-int io_setup_buffer_ring(struct io* io);
+int io_recv_ring_setup(struct ev* io);
+int io_setup_send_ring(struct ev* io);
+int io_setup_buffers(struct ev* io);
+int io_setup_buffer_ring(struct ev* io);
 
-int io_table_lookup(struct io* io,int fd);
+int fd_table_lookup(struct ev *io, int fd);
 
-int io_next_entry(struct io* io);
-int signal_init(struct io* io, int signum, signal_cb cb);
-int register_signal(struct io* io, int signum, signal_cb callback);
-int handle_signal(struct io* io, int signum);
+int io_next_entry(struct ev* io);
+int signal_init(struct ev* io, int signum, signal_cb cb);
+int register_signal(struct ev* io, int signum, signal_cb callback);
+int handle_signal(struct ev* io, int signum);
 
-int register_periodic(struct io* io, struct periodic *p, void (*cb)(void), double interval);
+int register_periodic(struct ev* ev, struct periodic *p, void (*cb)(void), double interval);
 void periodic_start(struct periodic *p);
 
-/**
- * Wrapper for timerfd_create and timerfd_settime to create interval timers.
+/** Creates a periodic timeout.
+ * Uses io_uring_prep_timeout to create a timeout.
+ */
+int periodic_init(struct ev* ev, int msec);
+
+/** Wrapper for timerfd_create and timerfd_settime to create interval timers. The file descriptor returned will
+ * have to be registered with an event.
+ *
  * @param interval Double value representing the interval.
  * @return File descriptor for timer_fd or -1 upon failure.
  */
-int periodic_init(double interval);
+int periodic_init2(double interval);
 
 bool
 is_periodic(int e);

@@ -134,8 +134,7 @@ main(void)
 
    conn->server_fd = server_fd;
 
-   events = ACCEPT;
-   register_event(main_io, listening_socket, events, (event_cb) accept_cb, NULL, 0);
+   register_event(main_io, listening_socket, ACCEPT, (event_cb) accept_cb, NULL, 0);
    ev_loop(main_io);
 
    return 0;
