@@ -25,6 +25,7 @@
 
 static struct ev_config ctx = { 0 };
 static int signal_fd;
+static int running;
 
 #define CLOSE_FD          1 << 1
 #define REPLENISH_BUFFERS 1 << 2
@@ -53,42 +54,6 @@ const int events_nr = (sizeof(handlers) / sizeof(io_handler));
  * EV Context
  */
 
-int
-ev_init(struct ev** ev_out,void* data)
-{
-   int ret;
-   struct ev* ev;
-
-   *ev_out = calloc(1,sizeof(struct ev));
-   if (!*ev_out)
-   {
-      fprintf(stderr,"io_init: calloc\n");
-      return 1;
-   }
-
-   ev = *ev_out;
-
-   ret = io_uring_queue_init_params(ctx.entries,&ev->ring,&ctx.params);
-   if (ret)
-   {
-      fprintf(stderr,"io_init: io_uring_queue_init_params: %s\n",strerror(-ret));
-      fprintf(stderr, "Make sure to setup context with io_context_setup\n");
-      return 1;
-   }
-
-   io_setup_buffers(ev);
-
-   for (int i = 0; i < MAX_FDS; i++)
-   {
-      ev->io_table[i].fd = EMPTY_FD;
-   }
-
-   ev->data = data;
-
-   sigemptyset(&ev->sigset);
-
-   return 0;
-}
 
 int
 ev_setup(struct ev_setup_opts opts)
@@ -157,6 +122,43 @@ ev_setup(struct ev_setup_opts opts)
 }
 
 int
+ev_init(struct ev** ev_out,void* data)
+{
+   int ret;
+   struct ev* ev;
+
+   *ev_out = calloc(1,sizeof(struct ev));
+   if (!*ev_out)
+   {
+      fprintf(stderr,"io_init: calloc\n");
+      return 1;
+   }
+
+   ev = *ev_out;
+
+   ret = io_uring_queue_init_params(ctx.entries,&ev->ring,&ctx.params);
+   if (ret)
+   {
+      fprintf(stderr,"io_init: io_uring_queue_init_params: %s\n",strerror(-ret));
+      fprintf(stderr, "Make sure to setup context with io_context_setup\n");
+      return 1;
+   }
+
+   io_setup_buffers(ev);
+
+   for (int i = 0; i < MAX_FDS; i++)
+   {
+      ev->io_table[i].fd = EMPTY_FD;
+   }
+
+   ev->data = data;
+
+   sigemptyset(&ev->sigset);
+
+   return 0;
+}
+
+int
 ev_loop(struct ev* ev)
 {
    struct __kernel_timespec active_ts, idle_ts;
@@ -175,7 +177,8 @@ ev_loop(struct ev* ev)
    active_ts.tv_nsec = wait_usec * 1000;
 
    flags = 0;
-   while (1)
+   running = true;
+   while (running)
    {
       struct __kernel_timespec* ts = &idle_ts;
       struct io_uring_cqe* cqe;
@@ -320,6 +323,7 @@ io_init(struct ev* ev, int fd, int event, io_cb cb, void* buf, size_t buf_len)
          }
          io_uring_prep_socket(sqe, domain, SOCK_STREAM, 0, 0);     /* TODO: WHAT CAN BE USED HERE ? */
          encode_user_data(sqe, SOCKET, ev->id, 0, 0, 0);
+         break;
 
       default:
          fprintf(stderr, "io_init: unknown event type: %d\n", event);
