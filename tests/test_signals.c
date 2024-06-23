@@ -26,7 +26,7 @@ main(void)
    struct io *io = NULL;
    struct periodic p;
 
-   ret = io_context_setup((struct io_configuration_options) {0});
+   ret = ev_setup((struct io_configuration_options) {0});
    if (ret)
    {
       return 1;

@@ -7,12 +7,26 @@
 #include "ev_io_uring.h"
 
 static int
-callback(void* data, int err)
+callback1(void* data, int err)
 {
    static double time = 0.0;
 
    time += 1.0;
-   printf("Callback: %lfs elapsed\n", time);
+   printf("%lf\n", time);
+   return 0;
+}
+
+static int
+callback2(void* data, int err)
+{
+   printf("foo");
+   return 0;
+}
+
+static int
+callback3(void* data, int err)
+{
+   printf("bar");
    return 0;
 }
 
@@ -21,30 +35,26 @@ main(void)
 {
    int ret;
    double a, b, c;
-   struct io *io = NULL;
-   struct periodic p;
-   ret = io_context_setup((struct io_configuration_options) {0});
+   struct ev *ev = NULL;
+   ret = ev_setup((struct ev_setup_opts) {0});
+   if (ret)
+   {
+      fprintf(stderr, "ev_setup\n");
+      return 1;
+   }
+
+   ret = ev_init(&ev, NULL);
+   if (ret)
+   {
+      fprintf(stderr, "ev_init\n");
+      return 1;
+   }
+   ret = periodic_init(ev, 1000, (periodic_cb) callback1);
    if (ret)
    {
       return 1;
    }
 
-   ret = ev_init(&io, NULL);
-   if (ret)
-   {
-      return 1;
-   }
-   int fd = periodic_init(1.0);
-   if (fd < 0)
-   {
-      return 1;
-   }
-   ret = register_event(io, fd, PERIODIC, (event_cb) callback, NULL, 0);
-   if (ret)
-   {
-      fprintf(stderr, "error\n");
-      return 1;
-   }
-   ev_loop(io);
+   ev_loop(ev);
    return ret;
 }
