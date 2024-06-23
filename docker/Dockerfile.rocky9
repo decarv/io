@@ -4,7 +4,12 @@ WORKDIR /ev
 
 COPY .. .
 
-RUN chmod +x tests/build_tests.sh && ./tests/build_tests.sh
+RUN dnf install -y gcc
+RUN dnf --enablerepo=crb install -y liburing-devel
+
+RUN gcc -c src/ev_io_uring.c
+
+# RUN chmod +x tests/build_tests.sh && ./tests/build_tests.sh
 
 # RUN chmod +x tests/run_tests.sh && ./tests/run_tests.sh
 

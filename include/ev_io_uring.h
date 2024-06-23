@@ -232,7 +232,7 @@ int register_io(struct ev* io, int fd, int event, event_cb callback, void* buf, 
 
 struct ev* io_cqe_to_connection(struct io_uring_cqe* cqe);
 int io_cqe_to_bid(struct io_uring_cqe* cqe);
-struct io_uring_sqe*io_get_sqe(struct ev* io);
+struct io_uring_sqe*get_sqe(struct ev* io);
 
 int ev_setup(struct ev_setup_opts opts);
 

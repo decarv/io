@@ -260,7 +260,7 @@ io_init(struct ev* ev, int fd, int event, io_cb cb, void* buf, size_t buf_len)
    int ret = 0;
    int t_index = -1;
    int domain;
-   struct io_uring_sqe* sqe = io_get_sqe(ev);
+   struct io_uring_sqe* sqe = get_sqe(ev);
    struct io_entry* entry = NULL;
    union sockaddr_u* addr;
 
@@ -466,12 +466,18 @@ signal_init_epoll(struct ev* ev, int signum, signal_cb cb)
    return fd;
 }
 
-/* TODO: delete */
 int
-signal_handler(struct ev* io, struct io_uring_cqe* cqe, void** buf, int* x)
+handle_signal(struct ev* ev, int t_index)
 {
-   return 0;
+   if (t_index < 0 || t_index >= ev->signal_count)
+   {
+      fprintf(stderr, "signal_table_insert: (t_index < 0 || t_index >= ev->signal_count). t_index: %d\n", t_index);
+      return 1;
+   }
+
+   return ev->sig_table[t_index].cb(ev->data, 0);
 }
+
 
 /**
  * Periodic Events
@@ -647,11 +653,11 @@ next_bid(int* bid)
 //}
 
 struct io_uring_sqe*
-io_get_sqe(struct ev* ev)
+get_sqe(struct ev* ev)
 {
    struct io_uring* ring = &ev->ring;
    struct io_uring_sqe* sqe;
-   do
+   do /* necessary if SQPOLL ? */
    {
       sqe = io_uring_get_sqe(ring);
       if (sqe)
@@ -666,20 +672,9 @@ io_get_sqe(struct ev* ev)
    while (1);
 }
 
-//
-
-int
-handle_signal(struct ev* ev, int signum)
-{
-   for (int i = 0; i < MAX_SIGNALS; i++)
-   {
-      if (ev->signal_table[i].signum == signum)
-      {
-         return ev->signal_table[i].callback(ev->data, signum);
-      }
-   }
-   return 1;
-}
+/**
+ * Handlers
+ */
 
 int
 io_setup_buffers(struct ev* ev)
