@@ -1,10 +1,1 @@
 FROM rockylinux:8
-
-WORKDIR /ev
-
-COPY .. .
-
-# RUN chmod +x tests/build_tests.sh && ./tests/build_tests.sh
-
-# RUN chmod +x tests/run_tests.sh && ./tests/run_tests.sh
-

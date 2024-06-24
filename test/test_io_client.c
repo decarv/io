@@ -9,7 +9,7 @@
 #include <string.h>
 
 #include "../include/ev_io_uring.h"
-#include "../include/utils.h"
+#include "utils.h"
 
 #define NUM_CLIENTS 1
 #define NUM_MESSAGES 50
