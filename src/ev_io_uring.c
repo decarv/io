@@ -28,20 +28,6 @@ static int signal_fd;
 static int running;
 
 /**
- * Deprecated.
-   //io_handler handlers[] =
-   //{
-   //   [ACCEPT] = accept_handler,
-   //   [RECEIVE] = receive_handler,
-   //   [SEND] = send_handler,
-   //   [CONNECT] = connect_handler,
-   //   [SOCKET] = socket_handler,
-   //   [SIGNAL] = NULL,
-   //   [PERIODIC] = NULL,
-   //};
- */
-
-/**
  * Event Handling Interface
  *  1. ev_init: Init the event handling context
  *  2. {signal|periodic|io}_init: returns an fd
@@ -56,6 +42,15 @@ int
 ev_setup(struct ev_setup_opts opts)
 {
    int ret;
+
+   /* configuration invariant asserts */
+   struct user_data ud;
+   size_t ud_ind_max_value = sizeof(ud.ind) * 8;
+   if (MAX_SIGNALS > ud_ind_max_value || MAX_FDS > ud_ind_max_value || MAX_PERIODIC > ud_ind_max_value)
+   {
+      fprintf(stderr, "ev_setup: Bad configuration for MAX_SIGNALS, MAX_FDS or MAX_PERIODIC\n");
+      exit(EXIT_FAILURE);
+   }
 
    /* set opts */
 
@@ -83,6 +78,7 @@ ev_setup(struct ev_setup_opts opts)
    ctx.params.flags |= IORING_SETUP_SINGLE_ISSUER; /* TODO: makes sense for pgagroal? */
    ctx.params.flags |= IORING_SETUP_CLAMP;
    ctx.params.flags |= IORING_SETUP_CQSIZE;
+   ctx.params.flags |= IORING_SETUP_DEFER_TASKRUN;
 
    /* default optsuration */
 
@@ -151,7 +147,7 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
    ret = ev_setup_buffers(ev);
    if (ret)
    {
-      fprintf(stderr, "");
+      fprintf(stderr, "ev_init: ev_setup_buffers");
       return 1;
    }
 
@@ -170,6 +166,11 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
 int
 ev_loop(struct ev* ev)
 {
+   int ret;
+   struct io_uring_cqe* cqe;
+   unsigned int head;
+   int events;
+   int to_wait = 1; /* wait for any 1 */
    struct __kernel_timespec active_ts, idle_ts;
    siginfo_t siginfo;
    sigset_t pending;
@@ -185,18 +186,18 @@ ev_loop(struct ev* ev)
    }
    active_ts.tv_nsec = wait_usec * 1000;
 
+   struct timespec timeout;
+   timeout.tv_sec = 0;
+   timeout.tv_nsec = 0;
+
    flags = 0;
-   running = true;
-   while (running)
+   atomic_store(&ev->running, true);
+   while (atomic_load(&ev->running))
    {
       struct __kernel_timespec* ts = &idle_ts;
-      struct io_uring_cqe* cqe;
-      unsigned int head;
-      int ret, events, to_wait;
 
-      to_wait = 1; /* wait for any 1 */
+      io_uring_submit_and_wait_timeout(&ev->ring, &cqe, to_wait, ts, NULL);
 
-      io_uring_submit_and_wait(&ev->ring, 0);
 
       /* Good idea to leave here to see what happens */
       if (*ev->ring.cq.koverflow)
@@ -229,10 +230,11 @@ ev_loop(struct ev* ev)
 
       /* TODO: housekeeping ? */
 
+      /* TODO: is this call blocking? Does not seem so but i am not sure... */
       ret = sigwaitinfo(&ev->sigset, &siginfo);
-      if (ret > 0)
+      if (ret >= 0)
       {
-         ret = handle_signal(ev, siginfo.si_signo);
+         ret = signal_handler(ev, siginfo.si_signo, siginfo.si_signo);
          if (ret)
          {
             fprintf(stderr, "Signal handler not found\n");
@@ -251,7 +253,7 @@ ev_setup_buffers(struct ev* ev)
    void* ptr;
 
    struct io_buf_ring* in_br = &ev->in_br;
-   struct io_buf_ring* out_br = &ev->in_br;
+   struct io_buf_ring* out_br = &ev->out_br;
 
    if (ctx.use_huge)
    {
@@ -269,7 +271,7 @@ ev_setup_buffers(struct ev* ev)
    }
 
    in_br->br = io_uring_setup_buf_ring(&ev->ring, ctx.buf_count, 0, 0, &ret);
-   out_br->br = io_uring_setup_buf_ring(&ev->ring, ctx.buf_count, 0, 0, &ret);
+   out_br->br = io_uring_setup_buf_ring(&ev->ring, ctx.buf_count, 1, 0, &ret);
    if (!in_br->br || !out_br->br)
    {
       fprintf(stderr, "Buffer ring register failed %d\n", ret);
@@ -279,7 +281,7 @@ ev_setup_buffers(struct ev* ev)
    ptr = in_br->buf;
    for (int i = 0; i < ctx.buf_count; i++)
    {
-      printf("add bid %d, data %p\n", i, ptr);
+//      printf("add bid %d, data %p\n", i, ptr);
       io_uring_buf_ring_add(in_br->br, ptr, ctx.buf_size, i, ctx.br_mask, i);
       ptr += ctx.buf_size;
    }
@@ -288,7 +290,7 @@ ev_setup_buffers(struct ev* ev)
    ptr = out_br->buf;
    for (int i = 0; i < ctx.buf_count; i++)
    {
-      printf("add bid %d, data %p\n", i, ptr);
+//      printf("add bid %d, data %p\n", i, ptr);
       io_uring_buf_ring_add(out_br->br, ptr, ctx.buf_size, i, ctx.br_mask, i);
       ptr += ctx.buf_size;
    }
@@ -337,11 +339,11 @@ ev_handler(struct ev* ev, struct io_uring_cqe* cqe)
 
    if (ud.event == PERIODIC)
    {
-      return periodic_handler(ev, ud.ind);
+      return periodic_handler(ev, ud.ind); /* TODO: why is t_ind not being set correctly? */
    }
    else if (ud.event == SIGNAL)
    {
-      return signal_handler(ev,ud.ind);
+      return signal_handler(ev,ud.ind,-1);
    }
 
    /* I/O event */
@@ -422,7 +424,12 @@ io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid
             domain = AF_INET;
          }
          io_uring_prep_socket(sqe,domain,SOCK_STREAM,0,0);         /* TODO: WHAT CAN BE USED HERE ? */
-         encode_user_data(sqe,SOCKET,ev->id,0,0,t_index);
+         encode_user_data(sqe,SOCKET,ev->id,bid,0,t_index);
+         break;
+
+      case READ:
+         io_uring_prep_read_multishot(sqe, fd, sizeof(long), 0, 0);
+         encode_user_data(sqe, SIGNAL, ev->id, bid, fd, t_index);
          break;
 
       default:
@@ -438,6 +445,13 @@ io_accept_init(struct ev* ev,int fd,io_cb cb)
 {
    return io_init(ev,fd,ACCEPT,cb,NULL,0,-1);
 }
+
+int
+io_read_init(struct ev* ev,int fd,io_cb cb)
+{
+   return io_init(ev,fd,READ,cb,NULL,0,-1);
+}
+
 
 int
 io_send_init(struct ev* ev,int fd,io_cb cb,void* buf,int buf_len,int bid)
@@ -567,10 +581,11 @@ int
 signal_init(struct ev* ev,int signum,signal_cb cb)
 {
    int ret;
+   int t_ind;
 
    /* register signal */
-   ret = signal_table_insert(ev,signum,cb);
-   if (ret)
+   t_ind = signal_table_insert(ev,signum,cb);
+   if (t_ind < 0)  /* TODO: t_ind serves no purpose in current implementation */
    {
       fprintf(stderr,"signal_init: signal_table_insert\n");
       return 1;
@@ -593,18 +608,56 @@ int
 signal_table_insert(struct ev* ev,int signum,signal_cb cb)
 {
    int i;
+
+   switch (signum)
+   {
+      case SIGTERM:
+         ev->sig_table[_SIGTERM].cb = cb;
+         ev->sig_table[_SIGTERM].signum = signum;
+         break;
+      case SIGHUP:
+         ev->sig_table[_SIGHUP].cb = cb;
+         ev->sig_table[_SIGHUP].signum = signum;
+         break;
+      case SIGINT:
+         ev->sig_table[_SIGINT].cb = cb;
+         ev->sig_table[_SIGINT].signum = signum;
+         break;
+      case SIGTRAP:
+         ev->sig_table[_SIGTRAP].cb = cb;
+         ev->sig_table[_SIGTRAP].signum = signum;
+         break;
+      case SIGABRT:
+         ev->sig_table[_SIGABRT].cb = cb;
+         ev->sig_table[_SIGABRT].signum = signum;
+         break;
+      case SIGALRM:
+         ev->sig_table[_SIGALRM].cb = cb;
+         ev->sig_table[_SIGALRM].signum = signum;
+         break;
+      default:
+         fprintf(stderr, "signal not supported\n");
+         return 1;
+   }
+
+   return 0;
+
+   /* TODO: this code is kept unreachable because it is currently not possible to have the following
+    *  implementation, based on signalfd
+    */
+
    const int signal_table_size = sizeof(ev->sig_table) / sizeof(struct signal_entry);
    if (ev->signal_count >= signal_table_size)
    {
       fprintf(stderr,"signal_table_insert: ev->signal_count >= signal_table_size\n");
-      return 1;
+      return -1;
    }
 
    i = ev->signal_count++;
    ev->sig_table[i].signum = signum;
    ev->sig_table[i].cb = cb;
 
-   return 0;
+   return i;
 }
 
 int
@@ -633,8 +686,44 @@ signal_init_epoll(struct ev* ev,int signum,signal_cb cb)
 }
 
 int
-signal_handler(struct ev* ev,int t_index)
+signal_handler(struct ev* ev,int t_index, int signum)
 {
+   if (signum >= 0) /* currently signum is used here as a workaround, ideally there should be no signum */
+   {
+      switch (signum)
+      {
+         case SIGTERM:
+            ev->sig_table[_SIGTERM].cb(ev->data, 0);
+            break;
+         case SIGHUP:
+            ev->sig_table[_SIGHUP].cb(ev->data, 0);
+            break;
+         case SIGINT:
+            ev->sig_table[_SIGINT].cb(ev->data, 0);
+            break;
+         case SIGTRAP:
+            ev->sig_table[_SIGTRAP].cb(ev->data, 0);
+            break;
+         case SIGABRT:
+            ev->sig_table[_SIGABRT].cb(ev->data, 0);
+            break;
+         case SIGALRM:
+            ev->sig_table[_SIGALRM].cb(ev->data, 0);
+            break;
+         default:
+            fprintf(stderr, "signal not supported\n");
+            return 1;
+      }
+
+      return 0;
+   }
+
+   /** TODO: currently this has no solution
+    *
+    */
+   fprintf(stderr, "shouldn't execute");
+   exit(EXIT_FAILURE);
+
    if (t_index < 0 || t_index >= ev->signal_count)
    {
       fprintf(stderr,"signal_handler: (t_index < 0 || t_index >= ev->signal_count). t_index: %d\n",t_index);
@@ -658,11 +747,11 @@ periodic_init(struct ev* ev,int msec,periodic_cb cb)
    };
    int t_ind = periodic_table_insert(ev,ts,cb);
 
+
    /* prepare periodic */
    struct io_uring_sqe* sqe = io_uring_get_sqe(&ev->ring);
    encode_user_data(sqe,PERIODIC,0,0,t_ind,t_ind);
-   io_uring_prep_timeout(sqe,&ts,0,IORING_TIMEOUT_MULTISHOT);
-   ev->periodic_count++;
+   io_uring_prep_timeout(sqe,&ev->per_table[t_ind].ts,0,IORING_TIMEOUT_MULTISHOT);
 
    return 0;
 }
@@ -685,7 +774,7 @@ periodic_table_insert(struct ev* ev,struct __kernel_timespec ts,periodic_cb cb)
    ev->per_table[i].ts.tv_nsec = ts.tv_nsec;
    ev->per_table[i].cb = cb;
 
-   return 0;
+   return i;
 }
 
 int
@@ -895,7 +984,7 @@ socket_handler(struct ev* ev,struct io_uring_cqe* cqe,void** buf,int* bid)
  */
 
 void
-encode_user_data(struct io_uring_sqe* sqe,uint8_t event,uint16_t id,uint16_t bid,uint16_t fd,uint16_t ind)
+encode_user_data(struct io_uring_sqe* sqe,uint8_t event,uint16_t id,uint8_t bid,uint16_t fd,uint16_t ind)
 {
    struct user_data ud = {
       .event = event,
@@ -933,7 +1022,7 @@ get_sqe(struct ev* ev)
 {
    struct io_uring* ring = &ev->ring;
    struct io_uring_sqe* sqe;
-   do /* necessary if SQPOLL ? */
+   do /* necessary if SQPOLL, but I don't think there is an advantage of using SQPOLL */
    {
       sqe = io_uring_get_sqe(ring);
       if (sqe)

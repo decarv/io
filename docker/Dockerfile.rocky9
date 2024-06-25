@@ -4,6 +4,12 @@ WORKDIR /ev
 
 COPY .. .
 
-RUN dnf install -y gcc
-RUN dnf --enablerepo=crb install -y liburing-devel
-RUN mkdir build; cd build; cmake ..; make
+RUN dnf install -y gcc \
+    && dnf --enablerepo=crb install -y liburing-devel \
+    && dnf install -y cmake
+
+RUN rm -rf build \
+    && mkdir build \
+    && cd build \
+    && cmake .. \
+    && make -e

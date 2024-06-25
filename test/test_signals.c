@@ -1,4 +1,3 @@
-
 #include <signal.h>
 #include <time.h>
 #include <stdio.h>
@@ -7,14 +6,114 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
+#include <pthread.h>
 #include "ev_io_uring.h"
 
-int
-callback(void* data, int signum)
-{
-   static int next = 0;
-   printf("%d\n", next++);
+static int expected = 1;
+
+/* Signal call counters */
+static volatile int sigterm_calls = 0;
+static volatile int sighup_calls = 0;
+static volatile int sigint_calls = 0;
+static volatile int sigtrap_calls = 0;
+static volatile int sigabrt_calls = 0;
+static volatile int sigalrm_calls = 0;
+
+struct conn {
+    struct ev* ev;
+};
+
+/* Signal callbacks */
+int sigterm_callback(void* data, int signum) {
+   sigterm_calls++;
    return 0;
+}
+
+int sighup_callback(void* data, int signum) {
+   sighup_calls++;
+   return 0;
+}
+
+int sigint_callback(void* data, int signum) {
+   sigint_calls++;
+   return 0;
+}
+
+int sigtrap_callback(void* data, int signum) {
+   sigtrap_calls++;
+   return 0;
+}
+
+int sigabrt_callback(void* data, int signum) {
+   sigabrt_calls++;
+   return 0;
+}
+
+int sigalrm_callback(void* data, int signum) {
+   sigalrm_calls++;
+   struct conn* c = (struct conn*) data;
+   atomic_store(&c->ev->running, false);
+   return 0;
+}
+
+struct arg {
+    struct ev* ev;
+    pid_t pid;
+};
+
+void *
+send_signals(void *p)
+{
+   struct arg* param = (struct arg*)p;
+   struct ev* ev = param->ev;
+   pid_t pid = param->pid;
+
+
+   sigset_t set;
+   sigemptyset(&set);
+   sigaddset(&set, SIGTERM);
+   sigaddset(&set, SIGHUP);
+   sigaddset(&set, SIGINT);
+   sigaddset(&set, SIGTRAP);
+   sigaddset(&set, SIGABRT);
+   sigaddset(&set, SIGALRM);
+   pthread_sigmask(SIG_BLOCK, &set, NULL);
+
+   for (int i = 0; i < expected; i++)
+   {
+      if (kill(pid, SIGTERM) == -1)
+      {
+         perror("kill");
+      }
+      usleep(1000000);
+      if (kill(pid, SIGHUP) == -1)
+      {
+         perror("kill");
+      }
+      usleep(1000000);
+      if (kill(pid, SIGTRAP) == -1)
+      {
+         perror("kill");
+      }
+      usleep(1000000);
+      if (kill(pid, SIGINT) == -1)
+      {
+         perror("kill");
+      }
+      usleep(1000000);
+      if (kill(pid, SIGABRT) == -1)
+      {
+         perror("kill");
+      }
+      usleep(1000000);
+      if (kill(pid, SIGALRM) == -1)
+      {
+         perror("kill");
+      }
+      usleep(1000000);
+   }
+   return NULL;
 }
 
 
@@ -22,49 +121,59 @@ int
 main(void)
 {
    int ret;
-   double a, b, c;
-   struct io *io = NULL;
-   struct periodic p;
+   struct conn *c = malloc(sizeof(struct conn));
+   pthread_t pthread, killer_thread;
 
-   ret = ev_setup((struct io_configuration_options) {0});
+   ret = ev_init(&c->ev, c, (struct ev_setup_opts) {0});
    if (ret)
    {
+      fprintf(stderr, "ev_init\n");
       return 1;
    }
 
-   ret = ev_init(&io, NULL);
-   if (ret)
-   {
+   struct ev* ev = c->ev;
+
+   /* Initialize signal handlers */
+   ret = signal_init(ev, SIGTERM, sigterm_callback);
+   if (ret) {
+      return 1;
+   }
+   ret = signal_init(ev, SIGHUP, sighup_callback);
+   if (ret) {
+      return 1;
+   }
+   ret = signal_init(ev, SIGINT, sigint_callback);
+   if (ret) {
+      return 1;
+   }
+   ret = signal_init(ev, SIGTRAP, sigtrap_callback);
+   if (ret) {
+      return 1;
+   }
+   ret = signal_init(ev, SIGABRT, sigabrt_callback);
+   if (ret) {
+      return 1;
+   }
+   ret = signal_init(ev, SIGALRM, sigalrm_callback);
+   if (ret) {
       return 1;
    }
 
-   int fd = signal_init(io, SIGINT, callback);
-   if (fd < 0)
-   {
-      return 1;
-   }
+   struct arg param = {
+           .pid = getpid(),
+           .ev = ev
+   };
+   pthread_create(&pthread, NULL, send_signals, &param);
 
-   pid_t pid = fork();
-   if (!pid) /* if child */
-   {
-      pid_t i = getpid();
-      printf("%d\n", i);
-      struct signalfd_siginfo fdsi;
+   ev_loop(ev);
 
-      ev_loop(io);
+   /* Assert the number of calls for each signal */
+   assert(expected == sigterm_calls);
+   assert(expected == sighup_calls);
+   assert(expected == sigint_calls);
+   assert(expected == sigtrap_calls);
+   assert(expected == sigabrt_calls);
+   assert(expected == sigalrm_calls);
 
-   }
-   else
-   {
-      do {
-         sleep(2);
-         if (kill(pid, SIGINT) == -1)
-         {
-            perror("kill");
-            return 1;
-         }
-         printf("Sent SIGINT to %d\n", pid);
-      } while (1);
-   }
-   return ret;
+   return 0;
 }

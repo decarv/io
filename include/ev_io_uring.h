@@ -28,26 +28,15 @@
 #define BUFFER_SIZE (1 << 14) /* 4KiB */
 #define BUFFER_COUNT 8        /* 4KiB * 8 = 32 KiB */
 
-#define MAX_FDS 8
+
+#define MAX_FDS (1 << 3)  /* this is limited by the value of 'ind' in user data */
 #define EMPTY_FD -1
 #define MISC_LENGTH (1 << 20) /* 1 MiB */
-#define MAX_SIGNALS  8
-#define MAX_PERIODIC 8
-#define MAX_EVENTS   32
+#define MAX_SIGNALS  (1 << 3)  /* this is limited by the value of 'ind' in user data */
+#define MAX_PERIODIC (1 << 3)  /* this is limited by the value of 'ind' in user data */
 
-/**
- *
- */
-enum {
-    __SIGTERM = 0,
-    __SIGHUP,
-    __SIGINT,
-    __SIGTRAP,
-    __SIGABRT,
-    __SIGALRM,
-};
-
-enum events_enum {
+/* Supported events. Not to be used directly by the client of the API. */
+enum supported_events {
     ACCEPT    = 0,
     RECEIVE   = 1,
     SEND      = 2,
@@ -55,18 +44,45 @@ enum events_enum {
     SOCKET    = 4,
     READ      = 5,
     WRITE     = 6,
-    IO_EVENTS_NR = 7,
+    IO_EVENTS_NR = 7,  /* TODO: This is ugly. Find a better way to do this. */
     SIGNAL    = 8,
     PERIODIC  = 9,
     EVENTS_NR = 10,
 };
 
+enum supported_signals {
+    _SIGTERM = 0,
+    _SIGHUP,
+    _SIGINT,
+    _SIGTRAP,
+    _SIGABRT,
+    _SIGALRM,
+};
+
+/* Return codes used for passing states around */
 enum return_codes {
    OK = 0,
    ERROR = 1,
    CLOSE_FD = 2,
    REPLENISH_BUFFERS = 3,
 };
+
+/* Define a function pointer type for I/O callbacks */
+typedef int (*io_cb)(void* data, int fd, int err, void* buf, size_t buf_len);
+
+/* Define a function pointer type for signal callbacks */
+typedef int (*signal_cb)(void* data, int err);
+
+/* Define a function pointer type for periodic callbacks */
+typedef int (*periodic_cb)(void* data, int err);
+
+/* Define a union that can hold any of the above callback types */
+typedef union event_cb
+{
+    io_cb io;
+    signal_cb signal;
+    periodic_cb periodic;
+} event_cb;
 
 struct ev_setup_opts
 {
@@ -82,25 +98,6 @@ struct ev_setup_opts
    int buf_count;
    int buf_size;
 };
-
-struct ev;
-
-/* Define a function pointer type for I/O callbacks */
-typedef int (*io_cb)(void* data, int fd, int err, void* buf, size_t buf_len);
-
-/* Define a function pointer type for signal callbacks */
-typedef int (*signal_cb)(void* data, int err);
-
-/* Define a function pointer type for periodic callbacks */
-typedef int (*periodic_cb)(void* data, int err);
-
-/* Define a union that can hold any of the above callback types */
-typedef union event_cb
-{
-   io_cb io;
-   signal_cb signal;
-   periodic_cb periodic;
-} event_cb;
 
 
 struct ev_config
@@ -147,7 +144,7 @@ struct io_entry
 
 struct signal_entry
 {
-   int signum;
+   int signum; /* signum is not being used in the current implementation (refer to [1]) */
    signal_cb cb;
 };
 
@@ -162,6 +159,7 @@ struct ev
    struct ev_config conf;
 
    int id;
+   volatile atomic_bool running; /* used to kill the loop */
 
    int io_count;
    struct io_entry io_table[MAX_FDS];
@@ -189,7 +187,6 @@ struct ev
    struct io_buf_ring in_br;
    struct io_buf_ring out_br;
 
-
     void* data;  /* pointer to user defined data that can be retrieved from inside of functions */
 };
 
@@ -200,10 +197,10 @@ struct user_data
       struct
       {
          uint8_t event;
-         uint16_t id;     /* connection id */
-         uint16_t bid;    /* buffer index or buffer length */
+         uint8_t bid;    /* unused: buffer index */
+         uint16_t id;     /* unused: connection id */
          uint16_t fd;
-         uint8_t ind;
+         uint16_t ind;     /* index of the table used to retrieve the callback associated with the event */
       };
       uint64_t as_u64;
    };
@@ -226,6 +223,12 @@ struct periodic
 
 int io_init(struct ev* io, int fd, int event, io_cb callback, void* buf, size_t buf_len, int bid);
 int register_io(struct ev* io, int fd, int event, event_cb callback, void* buf, size_t buf_len);
+int io_accept_init(struct ev* ev,int fd,io_cb cb);
+int io_read_init(struct ev* ev,int fd,io_cb cb);
+int io_receive_init(struct ev* ev,int fd,io_cb cb);
+int io_connect_init(struct ev* ev,int fd,io_cb cb,union sockaddr_u* addr);
+int io_send_init(struct ev* ev,int fd,io_cb cb,void* buf,int buf_len,int bid);
+
 
 struct io_uring_sqe*get_sqe(struct ev* io);
 
@@ -252,14 +255,20 @@ int receive_handler(struct ev* ev, struct io_uring_cqe* cqe, void** buf, int*, b
 int accept_handler(struct ev* ev, struct io_uring_cqe* cqe);
 int connect_handler(struct ev* ev, struct io_uring_cqe* cqe);
 int socket_handler(struct ev* ev, struct io_uring_cqe* cqe, void** buf, int*);
-int signal_handler(struct ev* ev, int t_index);
+/**
+ * [1] *NOTE*: the implementation currently receives signum as a workaround.
+ * Remember that the ideal way to deal with signals here may be through signalfd and
+ * registering the signals to a table. It is cleaner and it is consistent with the rest
+ * of the event handling.
+ */
+int signal_handler(struct ev* ev, int t_index, int signum);
 int periodic_handler(struct ev* ev, int t_index);
 
 /**
  * @param fd: either the file descriptor or signum.
  * @param ind: respective table index where the callback is found.
  */
-void encode_user_data(struct io_uring_sqe* sqe, uint8_t event, uint16_t id, uint16_t bid, uint16_t fd, uint16_t ind);
+void encode_user_data(struct io_uring_sqe* sqe,uint8_t event,uint16_t id,uint8_t bid,uint16_t fd,uint16_t ind);
 struct user_data decode_user_data(struct io_uring_cqe* cqe);
 
 int ev_init(struct ev** io, void* data,struct ev_setup_opts opts);
@@ -297,6 +306,7 @@ int signal_init(struct ev* io, int signum, signal_cb cb);
 int signal_table_lookup(struct ev *ev, int signum);
 int handle_signal(struct ev* io, int signum);
 int signal_table_insert(struct ev* ev, int signum, signal_cb cb);
+int signal_init_epoll(struct ev* ev,int signum,signal_cb cb);
 
 /**
  * utils
