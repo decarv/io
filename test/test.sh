@@ -8,3 +8,4 @@ fi
 
 cd ..
 docker build -t ev-rockylinux9-test-build -f docker/Dockerfile.rocky9 .
+docker run --privileged -it ev-rockylinux9-test-build

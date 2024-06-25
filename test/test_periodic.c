@@ -12,15 +12,15 @@
 
 #define ABS(x, y) (x > y ? x - y : y - x)
 
-static double total_time = 30.1;
+static double total_time = 5.2;
 
 static double cb1_period = 1.0;
 static int nr_calls_cb1 = 0;
 
-static double cb2_period = 2.5;
+static double cb2_period = 0.7;
 static int nr_calls_cb2 = 0;
 
-static double cb3_period = 7.5;
+static double cb3_period = 0.5;
 static int nr_calls_cb3 = 0;
 
 static int
@@ -48,8 +48,8 @@ void *
 ttl(void* p)
 {
    struct ev* ev = (struct ev *) p;
-   usleep((int)(total_time*1000000));
-   ev->running = false;
+   sleep((int)(total_time + 1));
+   atomic_store(&ev->running, false);
    return NULL;
 }
 
