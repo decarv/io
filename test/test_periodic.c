@@ -8,19 +8,19 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <pthread.h>
-#include "ev_io_uring.h"
+#include "ev.h"
 
 #define ABS(x, y) (x > y ? x - y : y - x)
 
-static double total_time = 5.2;
+static int total_time = 1; /* sec */
 
-static double cb1_period = 1.0;
+static int cb1_period = 500; /* msec */
 static int nr_calls_cb1 = 0;
 
-static double cb2_period = 0.7;
+static int cb2_period = 100;
 static int nr_calls_cb2 = 0;
 
-static double cb3_period = 0.5;
+static int cb3_period = 50;
 static int nr_calls_cb3 = 0;
 
 static int
@@ -48,7 +48,7 @@ void *
 ttl(void* p)
 {
    struct ev* ev = (struct ev *) p;
-   sleep((int)(total_time + 1));
+   sleep((int)(total_time));
    atomic_store(&ev->running, false);
    return NULL;
 }
@@ -61,9 +61,10 @@ main(void)
    struct ev *ev = NULL;
    pthread_t thread;
 
-   double expected_nr_calls_cb1 = total_time / cb1_period;
-   double expected_nr_calls_cb2 = total_time / cb2_period;
-   double expected_nr_calls_cb3 = total_time / cb3_period;
+   /* sec to msec */
+   int expected_nr_calls_cb1 = 1000 * total_time / cb1_period;
+   int expected_nr_calls_cb2 = 1000 * total_time / cb2_period;
+   int expected_nr_calls_cb3 = 1000 * total_time / cb3_period;
 
    ret = ev_init(&ev, NULL, (struct ev_setup_opts) {0});
    if (ret)
@@ -71,19 +72,19 @@ main(void)
       fprintf(stderr, "ev_init\n");
       return 1;
    }
-   ret = periodic_init(ev, (int)(cb1_period * 1000), (periodic_cb) cb1);
+   ret = periodic_init(ev, cb1_period, (periodic_cb) cb1);
    if (ret)
    {
       fprintf(stderr, "periodic_init\n");
       return 1;
    }
-   ret = periodic_init(ev, (int)(cb2_period * 1000), (periodic_cb) cb2);
+   ret = periodic_init(ev, cb2_period, (periodic_cb) cb2);
    if (ret)
    {
       fprintf(stderr, "periodic_init\n");
       return 1;
    }
-   ret = periodic_init(ev, (int)(cb3_period * 1000), (periodic_cb) cb3);
+   ret = periodic_init(ev, cb3_period, (periodic_cb) cb3);
    if (ret)
    {
       fprintf(stderr, "periodic_init\n");

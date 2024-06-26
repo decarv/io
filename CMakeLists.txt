@@ -49,19 +49,35 @@ if(NOT COMPILER_SUPPORTS_C17)
     message(FATAL_ERROR "The compiler ${CMAKE_C_COMPILER} has no C17 support. Please use a different C compiler.")
 endif()
 
-find_package(liburing 2.5)
-if (LIBURING_FOUND)
-    message(STATUS "Backend set to io_uring.")
-    set(SOURCE_FILES src/ev_io_uring.c test/utils.c)
-    include_directories(${LIBURING_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/include)
-    add_library(pgagroal_ev STATIC ${SOURCE_FILES})
-    target_link_libraries(pgagroal_ev ${LIBURING_LIBRARIES})
-    install(TARGETS pgagroal_ev DESTINATION ${CMAKE_BINARY_DIR})
-#    install(FILES include/mylib.h DESTINATION include)
+option(USE_EPOLL "Use epoll as the backend instead of io_uring" OFF)
 
+find_package(liburing 2.5)
+if (LIBURING_FOUND AND NOT USE_EPOLL)
+    message(STATUS "Backend set to io_uring.")
+    add_definitions(-DUSE_IO_URING)
+    set(BACKEND_SRC src/ev_io_uring.c)
+    include_directories(${LIBURING_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/include)
 else ()
-    message(FATAL_ERROR "liburing 2.5 not found. Backend is set to epoll. Not implemented yet.")
+    message(STATUS "Backend set to epoll.")
+    set(BACKEND_SRC "src/ev_epoll.c")
+    include_directories(${CMAKE_SOURCE_DIR}/include)
 endif()
 
-# Add subdirectory for tests
+set(SOURCE_FILES ${BACKEND_SRC})
+add_library(pgagroal_ev STATIC ${SOURCE_FILES})
+
+# link luring
+#if (LIBURING_FOUND)
+#    target_link_libraries(pgagroal_ev ${LIBURING_LIBRARIES})
+#endif()
+
+install(TARGETS pgagroal_ev DESTINATION ${CMAKE_BINARY_DIR})
+
+message(STATUS "pgagroal_ev built correctly.")
+
+# enable and run tests
+
+enable_testing()
+
 add_subdirectory(test)
+

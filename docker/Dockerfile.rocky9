@@ -12,4 +12,9 @@ RUN rm -rf build \
     && mkdir build \
     && cd build \
     && cmake .. \
-    && make -e
+    && make
+
+WORKDIR /ev/build
+
+# run when starting the container
+CMD ["ctest"]

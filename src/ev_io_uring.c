@@ -1,4 +1,4 @@
-/* io.c
+/* ev_io_uring.c
  * Copyright (C) 2024 Henrique de Carvalho <decarv.henrique@gmail.com>
  *
  * This code is based on: https://git.kernel.dk/cgit/liburing/tree/examples/proxy.c
@@ -7,7 +7,7 @@
  */
 
 /* ev */
-#include "../include/ev_io_uring.h"
+#include "../include/ev.h"
 
 /* system */
 #include <sys/eventfd.h>
@@ -23,9 +23,7 @@
 #include <time.h>
 #include <sys/poll.h>
 
-static struct ev_config ctx = { 0 };
-static int signal_fd;
-static int running;
+//static struct ev_config conf = { 0 }; /* TODO: no need to be global anymore, it's directly associated with context */
 
 /**
  * Event Handling Interface
@@ -39,7 +37,7 @@ static int running;
  */
 
 int
-ev_setup(struct ev_setup_opts opts)
+ev_setup(struct ev_config* conf, struct ev_setup_opts opts)
 {
    int ret;
 
@@ -54,17 +52,17 @@ ev_setup(struct ev_setup_opts opts)
 
    /* set opts */
 
-   ctx.napi = opts.napi;
-   ctx.sqpoll = opts.sqpoll;
-   ctx.use_huge = opts.use_huge;
-   ctx.defer_tw = opts.defer_tw;
-   ctx.snd_ring = opts.snd_ring;
-   ctx.snd_bundle = opts.snd_bundle;
-   ctx.fixed_files = opts.fixed_files;
+   conf->napi = opts.napi;
+   conf->sqpoll = opts.sqpoll;
+   conf->use_huge = opts.use_huge;
+   conf->defer_tw = opts.defer_tw;
+   conf->snd_ring = opts.snd_ring;
+   conf->snd_bundle = opts.snd_bundle;
+   conf->fixed_files = opts.fixed_files;
 
-   ctx.buf_count = opts.buf_count;
+   conf->buf_count = opts.buf_count;
 
-   if (ctx.defer_tw && ctx.sqpoll)
+   if (conf->defer_tw && conf->sqpoll)
    {
       fprintf(stderr, "Cannot use DEFER_TW and SQPOLL at the same time\n");
       exit(1);
@@ -72,40 +70,40 @@ ev_setup(struct ev_setup_opts opts)
 
    /* setup params TODO: pull from opts */
 
-   ctx.entries = (1 << 10);
-   ctx.params.cq_entries = (1 << 10);
-   ctx.params.flags = 0;
-   ctx.params.flags |= IORING_SETUP_SINGLE_ISSUER; /* TODO: makes sense for pgagroal? */
-   ctx.params.flags |= IORING_SETUP_CLAMP;
-   ctx.params.flags |= IORING_SETUP_CQSIZE;
-   ctx.params.flags |= IORING_SETUP_DEFER_TASKRUN;
+   conf->entries = (1 << 10);
+   conf->params.cq_entries = (1 << 10);
+   conf->params.flags = 0;
+   conf->params.flags |= IORING_SETUP_SINGLE_ISSUER; /* TODO: makes sense for pgagroal? */
+   conf->params.flags |= IORING_SETUP_CLAMP;
+   conf->params.flags |= IORING_SETUP_CQSIZE;
+   conf->params.flags |= IORING_SETUP_DEFER_TASKRUN;
 
    /* default optsuration */
 
-   if (ctx.defer_tw)
+   if (conf->defer_tw)
    {
-      ctx.params.flags |= IORING_SETUP_DEFER_TASKRUN; /* overwritten by SQPOLL */
+      conf->params.flags |= IORING_SETUP_DEFER_TASKRUN; /* overwritten by SQPOLL */
    }
-   if (ctx.sqpoll)
+   if (conf->sqpoll)
    {
-      ctx.params.flags |= IORING_SETUP_SQPOLL;
-      ctx.params.sq_thread_idle = opts.sq_thread_idle;
+      conf->params.flags |= IORING_SETUP_SQPOLL;
+      conf->params.sq_thread_idle = opts.sq_thread_idle;
    }
-   if (!ctx.sqpoll && !ctx.defer_tw)
+   if (!conf->sqpoll && !conf->defer_tw)
    {
-      ctx.params.flags |= IORING_SETUP_COOP_TASKRUN;
+      conf->params.flags |= IORING_SETUP_COOP_TASKRUN;
    }
-   if (!ctx.buf_count)
+   if (!conf->buf_count)
    {
-      ctx.buf_count = BUFFER_COUNT;
+      conf->buf_count = BUFFER_COUNT;
    }
-   if (!ctx.buf_size)
+   if (!conf->buf_size)
    {
-      ctx.buf_size = BUFFER_SIZE;
+      conf->buf_size = BUFFER_SIZE;
    }
-   ctx.br_mask = (ctx.buf_count - 1);
+   conf->br_mask = (conf->buf_count - 1);
 
-   if (ctx.fixed_files)
+   if (conf->fixed_files)
    {
       fprintf(stderr, "io_context_setup: no support for fixed files\n"); /* TODO */
       exit(1);
@@ -119,13 +117,7 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
 {
    int ret;
    struct ev* ev;
-
-   ret = ev_setup(opts);
-   if (ret)
-   {
-      fprintf(stderr, "ev_init: ev_setup\n");
-      return 1;
-   }
+   struct ev_config conf;
 
    *ev_out = calloc(1, sizeof(struct ev));
    if (!*ev_out)
@@ -136,11 +128,20 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
 
    ev = *ev_out;
 
-   ret = io_uring_queue_init_params(ctx.entries, &ev->ring, &ctx.params);
+   ret = ev_setup(&ev->conf, opts);
+   if (ret)
+   {
+      fprintf(stderr, "ev_init: ev_setup\n");
+      return 1;
+   }
+
+   conf = ev->conf;
+
+   ret = io_uring_queue_init_params(conf.entries, &ev->ring, &conf.params);
    if (ret)
    {
       fprintf(stderr, "ev_init: io_uring_queue_init_params: %s\n", strerror(-ret));
-      fprintf(stderr, "Make sure to setup context with io_context_setup\n");
+      fprintf(stderr, "make sure to setup context with io_context_setup\n");
       return 1;
    }
 
@@ -153,7 +154,7 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
 
    for (int i = 0; i < MAX_FDS; i++)
    {
-      ev->io_table[i].fd = EMPTY_FD;
+      ev->io_table[i].fd = EMPTY;
    }
 
    ev->data = data;
@@ -167,37 +168,36 @@ int
 ev_loop(struct ev* ev)
 {
    int ret;
-   struct io_uring_cqe* cqe;
-   unsigned int head;
+   int sig;
+   int flags;
    int events;
    int to_wait = 1; /* wait for any 1 */
-   struct __kernel_timespec active_ts, idle_ts;
-   siginfo_t siginfo;
-   sigset_t pending;
-   int flags;
+   unsigned int head;
    static int wait_usec = 1000000;
-   idle_ts.tv_sec = 0;
-   idle_ts.tv_nsec = 100000000LL;
-   active_ts = idle_ts;
-   if (wait_usec > 1000000)
-   {
-      active_ts.tv_sec = wait_usec / 1000000;
-      wait_usec -= active_ts.tv_sec * 1000000;
-   }
-   active_ts.tv_nsec = wait_usec * 1000;
-
-   struct timespec timeout;
-   timeout.tv_sec = 0;
-   timeout.tv_nsec = 0;
+   struct io_uring_cqe* cqe;
+   struct __kernel_timespec* ts;
+   struct __kernel_timespec idle_ts = {
+      .tv_sec = 0,
+      .tv_nsec = 100000000LL
+   };
+//   struct __kernel_timespec active_ts = idle_ts;
+//   if (wait_usec > 1000000)
+//   {
+//      active_ts.tv_sec = wait_usec / 1000000;
+//      wait_usec -= active_ts.tv_sec * 1000000;
+//   }
+//   active_ts.tv_nsec = wait_usec * 1000;
+   struct timespec timeout = {
+      .tv_sec = 0,
+      .tv_nsec = 0
+   };
 
    flags = 0;
-   atomic_store(&ev->running, true);
+   ev->running = true; /* safe to initialize */
    while (atomic_load(&ev->running))
    {
-      struct __kernel_timespec* ts = &idle_ts;
-
+      ts = &idle_ts;
       io_uring_submit_and_wait_timeout(&ev->ring, &cqe, to_wait, ts, NULL);
-
 
       /* Good idea to leave here to see what happens */
       if (*ev->ring.cq.koverflow)
@@ -222,7 +222,6 @@ ev_loop(struct ev* ev)
          }
          events++;
       }
-
       if (events)
       {
          io_uring_cq_advance(&ev->ring, events);  /* batch marking as seen */
@@ -230,11 +229,10 @@ ev_loop(struct ev* ev)
 
       /* TODO: housekeeping ? */
 
-      /* TODO: is this call blocking? Does not seem so but i am not sure... */
-      ret = sigwaitinfo(&ev->sigset, &siginfo);
-      if (ret >= 0)
+      sig = sigtimedwait(&ev->sigset, NULL, &timeout);
+      if (sig > 0)
       {
-         ret = signal_handler(ev, siginfo.si_signo, siginfo.si_signo);
+         ret = signal_handler(ev, sig, sig);
          if (ret)
          {
             fprintf(stderr, "Signal handler not found\n");
@@ -251,27 +249,28 @@ ev_setup_buffers(struct ev* ev)
 {
    int ret;
    void* ptr;
+   struct ev_config conf = ev->conf;
 
    struct io_buf_ring* in_br = &ev->in_br;
    struct io_buf_ring* out_br = &ev->out_br;
 
-   if (ctx.use_huge)
+   if (conf.use_huge)
    {
       fprintf(stderr, "ev_setup_buffers: use_huge not implemented yet\n"); /* TODO */
    }
-   if (posix_memalign(&in_br->buf, ALIGNMENT, ctx.buf_count * ctx.buf_size))
+   if (posix_memalign(&in_br->buf, ALIGNMENT, conf.buf_count * conf.buf_size))
    {
       perror("ev_setup_buffers: posix_memalign");
       return 1;
    }
-   if (posix_memalign(&out_br->buf, ALIGNMENT, ctx.buf_count * ctx.buf_size))
+   if (posix_memalign(&out_br->buf, ALIGNMENT, conf.buf_count * conf.buf_size))
    {
       perror("ev_setup_buffers: posix_memalign");
       return 1;
    }
 
-   in_br->br = io_uring_setup_buf_ring(&ev->ring, ctx.buf_count, 0, 0, &ret);
-   out_br->br = io_uring_setup_buf_ring(&ev->ring, ctx.buf_count, 1, 0, &ret);
+   in_br->br = io_uring_setup_buf_ring(&ev->ring, conf.buf_count, 0, 0, &ret);
+   out_br->br = io_uring_setup_buf_ring(&ev->ring, conf.buf_count, 1, 0, &ret);
    if (!in_br->br || !out_br->br)
    {
       fprintf(stderr, "Buffer ring register failed %d\n", ret);
@@ -279,22 +278,22 @@ ev_setup_buffers(struct ev* ev)
    }
 
    ptr = in_br->buf;
-   for (int i = 0; i < ctx.buf_count; i++)
+   for (int i = 0; i < conf.buf_count; i++)
    {
 //      printf("add bid %d, data %p\n", i, ptr);
-      io_uring_buf_ring_add(in_br->br, ptr, ctx.buf_size, i, ctx.br_mask, i);
-      ptr += ctx.buf_size;
+      io_uring_buf_ring_add(in_br->br, ptr, conf.buf_size, i, conf.br_mask, i);
+      ptr += conf.buf_size;
    }
-   io_uring_buf_ring_advance(in_br->br, ctx.buf_count);
+   io_uring_buf_ring_advance(in_br->br, conf.buf_count);
 
    ptr = out_br->buf;
-   for (int i = 0; i < ctx.buf_count; i++)
+   for (int i = 0; i < conf.buf_count; i++)
    {
 //      printf("add bid %d, data %p\n", i, ptr);
-      io_uring_buf_ring_add(out_br->br, ptr, ctx.buf_size, i, ctx.br_mask, i);
-      ptr += ctx.buf_size;
+      io_uring_buf_ring_add(out_br->br, ptr, conf.buf_size, i, conf.br_mask, i);
+      ptr += conf.buf_size;
    }
-   io_uring_buf_ring_advance(out_br->br, ctx.buf_count);
+   io_uring_buf_ring_advance(out_br->br, conf.buf_count);
 
    ev->next_out_bid = 0;
    return ret;
@@ -339,11 +338,11 @@ ev_handler(struct ev* ev, struct io_uring_cqe* cqe)
 
    if (ud.event == PERIODIC)
    {
-      return periodic_handler(ev, ud.ind); /* TODO: why is t_ind not being set correctly? */
+      return periodic_handler(ev, ud.ind);
    }
    else if (ud.event == SIGNAL)
    {
-      return signal_handler(ev,ud.ind,-1);
+      return signal_handler(ev,ud.ind,-1); /* unused, currently not handled here */
    }
 
    /* I/O event */
@@ -363,6 +362,7 @@ io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid
    int ret = 0;
    int t_index = -1;
    int domain;
+   struct ev_config conf = ev->conf;
    struct io_uring_sqe* sqe = get_sqe(ev);
    struct io_entry* entry = NULL;
    union sockaddr_u* addr;
@@ -403,7 +403,7 @@ io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid
       case CONNECT:
          addr = (union sockaddr_u*)buf;
          /* expects addr to be set correctly */
-         if (ctx.ipv6)
+         if (conf.ipv6)
          {
             io_uring_prep_connect(sqe,fd,(struct sockaddr*) &addr->addr6,sizeof(struct sockaddr_in6));
          }
@@ -415,7 +415,7 @@ io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid
          break;
 
       case SOCKET:
-         if (ctx.ipv6)
+         if (conf.ipv6)
          {
             domain = AF_INET6;
          }
@@ -427,9 +427,9 @@ io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid
          encode_user_data(sqe,SOCKET,ev->id,bid,0,t_index);
          break;
 
-      case READ:
-         io_uring_prep_read_multishot(sqe, fd, sizeof(long), 0, 0);
-         encode_user_data(sqe, SIGNAL, ev->id, bid, fd, t_index);
+      case READ: /* unused */
+         io_uring_prep_read(sqe,fd,buf,buf_len,0);
+         encode_user_data(sqe,SIGNAL,ev->id,bid,fd,t_index);
          break;
 
       default:
@@ -451,7 +451,6 @@ io_read_init(struct ev* ev,int fd,io_cb cb)
 {
    return io_init(ev,fd,READ,cb,NULL,0,-1);
 }
-
 
 int
 io_send_init(struct ev* ev,int fd,io_cb cb,void* buf,int buf_len,int bid)
@@ -480,7 +479,7 @@ io_table_insert(struct ev* ev,int fd,io_cb cb,int event)
    /* if fd is already registered, add cb to fd entry */
    for (i = 0; i < io_table_size; i++)
    {
-      if (ev->io_table[i].fd == EMPTY_FD)
+      if (ev->io_table[i].fd == EMPTY)
       {
          break; /* stop looking once reach unregistered entries */
       }
@@ -550,9 +549,10 @@ io_handler(struct ev* ev,struct io_uring_cqe* cqe)
 }
 
 int
-replenish_buffers(struct io_buf_ring* br,int bid_start,int bid_end)
+replenish_buffers(struct ev* ev,struct io_buf_ring* br,int bid_start,int bid_end)
 {
    int count;
+   struct ev_config conf = ev->conf;
 
    if (bid_end >= bid_start)
    {
@@ -560,12 +560,12 @@ replenish_buffers(struct io_buf_ring* br,int bid_start,int bid_end)
    }
    else
    {
-      count = (bid_end + ctx.buf_count - bid_start);
+      count = (bid_end + conf.buf_count - bid_start);
    }
 
-   for (int i = bid_start; i != bid_end; i = (i + 1) & (ctx.buf_count - 1))
+   for (int i = bid_start; i != bid_end; i = (i + 1) & (conf.buf_count - 1))
    {
-      io_uring_buf_ring_add(br->br,(void*)br->br->bufs[i].addr,ctx.buf_size,i,ctx.br_mask,0);
+      io_uring_buf_ring_add(br->br,(void*)br->br->bufs[i].addr,conf.buf_size,i,conf.br_mask,0);
    }
 
    io_uring_buf_ring_advance(br->br,count);
@@ -636,7 +636,7 @@ signal_table_insert(struct ev* ev,int signum,signal_cb cb)
          ev->sig_table[_SIGALRM].signum = signum;
          break;
       default:
-         fprintf(stderr, "signal not supported\n");
+         fprintf(stderr,"signal not supported\n");
          return 1;
    }
 
@@ -661,57 +661,32 @@ signal_table_insert(struct ev* ev,int signum,signal_cb cb)
 }
 
 int
-signal_init_epoll(struct ev* ev,int signum,signal_cb cb)
-{
-   int ret;
-   int fd;
-
-   sigaddset(&ev->sigset,signum);
-
-   ret = sigprocmask(SIG_BLOCK,&ev->sigset,NULL);
-   if (ret == -1)
-   {
-      fprintf(stdout,"signal_init_epoll: sigprocmask\n");
-      return -1;
-   }
-
-   fd = signalfd(-1,&ev->sigset,0);    /* TODO: SFD_NONBLOCK | SFD_CLOEXEC Flags? */
-   if (fd == -1)
-   {
-      perror("signal_init_epoll: signalfd");
-      return -1;
-   }
-
-   return fd;
-}
-
-int
-signal_handler(struct ev* ev,int t_index, int signum)
+signal_handler(struct ev* ev,int t_index,int signum)
 {
    if (signum >= 0) /* currently signum is used here as a workaround, ideally there should be no signum */
    {
       switch (signum)
       {
          case SIGTERM:
-            ev->sig_table[_SIGTERM].cb(ev->data, 0);
+            ev->sig_table[_SIGTERM].cb(ev->data,0);
             break;
          case SIGHUP:
-            ev->sig_table[_SIGHUP].cb(ev->data, 0);
+            ev->sig_table[_SIGHUP].cb(ev->data,0);
             break;
          case SIGINT:
-            ev->sig_table[_SIGINT].cb(ev->data, 0);
+            ev->sig_table[_SIGINT].cb(ev->data,0);
             break;
          case SIGTRAP:
-            ev->sig_table[_SIGTRAP].cb(ev->data, 0);
+            ev->sig_table[_SIGTRAP].cb(ev->data,0);
             break;
          case SIGABRT:
-            ev->sig_table[_SIGABRT].cb(ev->data, 0);
+            ev->sig_table[_SIGABRT].cb(ev->data,0);
             break;
          case SIGALRM:
-            ev->sig_table[_SIGALRM].cb(ev->data, 0);
+            ev->sig_table[_SIGALRM].cb(ev->data,0);
             break;
          default:
-            fprintf(stderr, "signal not supported\n");
+            fprintf(stderr,"signal not supported\n");
             return 1;
       }
 
@@ -721,7 +696,7 @@ signal_handler(struct ev* ev,int t_index, int signum)
    /** TODO: currently this has no solution
     *
     */
-   fprintf(stderr, "shouldn't execute");
+   fprintf(stderr,"shouldn't execute");
    exit(EXIT_FAILURE);
 
    if (t_index < 0 || t_index >= ev->signal_count)
@@ -746,7 +721,6 @@ periodic_init(struct ev* ev,int msec,periodic_cb cb)
       .tv_nsec = (msec % 1000) * 1000000
    };
    int t_ind = periodic_table_insert(ev,ts,cb);
-
 
    /* prepare periodic */
    struct io_uring_sqe* sqe = io_uring_get_sqe(&ev->ring);
@@ -823,7 +797,7 @@ periodic_handler(struct ev* ev,int t_index)
  */
 
 int
-prepare_receive(struct ev* io,int fd,int t_index)
+rearm_receive(struct ev* io,int fd,int t_index)
 {
    int ret;
    struct io_uring_sqe* sqe = get_sqe(io);
@@ -874,10 +848,11 @@ int
 receive_handler(struct ev* ev,struct io_uring_cqe* cqe,void** send_buf_base,int* bid,bool is_proxy)
 {
    int ret;
+   struct ev_config conf = ev->conf;
    struct user_data ud = decode_user_data(cqe);
    struct io_buf_ring* in_br = &ev->in_br;
    struct io_buf_ring* out_br = &ev->out_br;
-   *send_buf_base = (void*) (in_br->buf + *bid * ctx.buf_size);
+   *send_buf_base = (void*) (in_br->buf + *bid * conf.buf_size);
    struct io_uring_buf* buf;
    void* data;
    int pending_recv = 0;
@@ -916,12 +891,12 @@ receive_handler(struct ev* ev,struct io_uring_cqe* cqe,void** send_buf_base,int*
          this_bytes = in_bytes;
       }
 
-      io_uring_buf_ring_add(out_br->br,data,this_bytes,*bid,ctx.br_mask,0);
+      io_uring_buf_ring_add(out_br->br,data,this_bytes,*bid,conf.br_mask,0);
       io_uring_buf_ring_advance(out_br->br,1);
 
       in_bytes -= this_bytes;
 
-      *bid = (*bid + 1) & (ctx.buf_count - 1);
+      *bid = (*bid + 1) & (conf.buf_count - 1);
       nr_packets++;
    }
 
@@ -931,14 +906,14 @@ receive_handler(struct ev* ev,struct io_uring_cqe* cqe,void** send_buf_base,int*
     */
    if (!(cqe->flags & IORING_CQE_F_MORE))
    {
-      ret = prepare_receive(ev,ud.fd,ud.ind);
+      ret = rearm_receive(ev,ud.fd,ud.ind);
       if (ret)
       {
          return 1;
       }
    }
 
-   ret = replenish_buffers(in_br,bid_start,*bid);
+   ret = replenish_buffers(ev,in_br,bid_start,*bid);
    if (ret)
    {
       return 1;
@@ -952,13 +927,14 @@ send_handler(struct ev* ev,struct io_uring_cqe* cqe)
 {
    int ret;
    int buf_len = cqe->res;
+   struct ev_config conf = ev->conf;
    struct user_data ud = decode_user_data(cqe);
    if (ud.bid < 0)
    {
       return OK;
    }
-   int bid_end = (ud.bid + buf_len / ctx.buf_size + (int)(buf_len % ctx.buf_size > 0)) % ctx.buf_count;
-   ret = replenish_buffers(&ev->out_br,ud.bid,bid_end);
+   int bid_end = (ud.bid + buf_len / conf.buf_size + (int)(buf_len % conf.buf_size > 0)) % conf.buf_count;
+   ret = replenish_buffers(ev,&ev->out_br,ud.bid,bid_end);
    if (ret)
    {
       return 1;
@@ -1038,7 +1014,8 @@ get_sqe(struct ev* ev)
 }
 
 void
-next_bid(int* bid)
+next_bid(struct ev* ev,int* bid)
 {
-   *bid = (*bid + 1) % ctx.buf_count;
+   struct ev_config conf = ev->conf;
+   *bid = (*bid + 1) % conf.buf_count;
 }

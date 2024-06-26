@@ -8,9 +8,9 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <pthread.h>
-#include "ev_io_uring.h"
+#include "ev.h"
 
-static int expected = 1;
+static int expected = 2;
 
 /* Signal call counters */
 static volatile int sigterm_calls = 0;
@@ -19,6 +19,12 @@ static volatile int sigint_calls = 0;
 static volatile int sigtrap_calls = 0;
 static volatile int sigabrt_calls = 0;
 static volatile int sigalrm_calls = 0;
+static volatile int sigterm_sent = 0;
+static volatile int sighup_sent= 0;
+static volatile int sigint_sent= 0;
+static volatile int sigtrap_sent = 0;
+static volatile int sigabrt_sent = 0;
+static volatile int sigalrm_sent = 0;
 
 struct conn {
     struct ev* ev;
@@ -86,33 +92,34 @@ send_signals(void *p)
       {
          perror("kill");
       }
-      usleep(1000000);
+      usleep(100);
       if (kill(pid, SIGHUP) == -1)
       {
          perror("kill");
       }
-      usleep(1000000);
+      usleep(100);
       if (kill(pid, SIGTRAP) == -1)
       {
          perror("kill");
       }
-      usleep(1000000);
+      usleep(100);
       if (kill(pid, SIGINT) == -1)
       {
          perror("kill");
       }
-      usleep(1000000);
+      usleep(100);
       if (kill(pid, SIGABRT) == -1)
       {
          perror("kill");
       }
-      usleep(1000000);
-      if (kill(pid, SIGALRM) == -1)
-      {
-         perror("kill");
-      }
-      usleep(1000000);
+      usleep(100);
+
    }
+   if (kill(pid, SIGALRM)== -1)
+   {
+      perror("kill");
+   }
+   usleep(100);
    return NULL;
 }
 
@@ -173,7 +180,9 @@ main(void)
    assert(expected == sigint_calls);
    assert(expected == sigtrap_calls);
    assert(expected == sigabrt_calls);
-   assert(expected == sigalrm_calls);
+   assert(sigalrm_calls == 1);
+
+   ev_free(&ev);
 
    return 0;
 }

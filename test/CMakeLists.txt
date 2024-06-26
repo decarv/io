@@ -14,12 +14,18 @@ include_directories(${CMAKE_SOURCE_DIR}/include ${LIBURING_INCLUDE_DIRS} ${CMAKE
 add_executable(test_periodic test_periodic.c)
 target_link_libraries(test_periodic PRIVATE pgagroal_ev uring)
 set_target_properties(test_periodic PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
-add_test(NAME "[io_uring] Periodic Test" COMMAND test_periodic)
 
 add_executable(test_signals test_signals.c)
 target_link_libraries(test_signals PRIVATE pgagroal_ev uring)
 set_target_properties(test_signals PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
-add_test(NAME "[io_uring] Signal Test" COMMAND test_signals)
+
+if(USE_EPOLL)
+	message(STATUS "Starting epoll tests...")
+else()
+	message(STATUS "Starting io_uring tests...")
+endif()
+add_test(NAME "Periodic Test" COMMAND test_periodic)
+add_test(NAME "Signal Test" COMMAND test_signals)
 
 # Uncomment
 # add_executable(test_io_server test_io_server.c)
