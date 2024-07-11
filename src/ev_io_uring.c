@@ -517,6 +517,7 @@ io_handler(struct ev* ev,struct io_uring_cqe* cqe)
    int bid_end = bid;
    int count;
    void* buf;
+   int ti = ud.ind;
 
    switch (ud.event)
    {
@@ -531,21 +532,22 @@ io_handler(struct ev* ev,struct io_uring_cqe* cqe)
          ret = receive_handler(ev,cqe,&buf,&bid_end,false);
          switch (ret)
          {
-            case ERROR:
-               return ERROR;
             case CLOSE_FD: /* connection closed */
                close(ud.fd);
-               ev->io_table[ud.ind].fd = -1; /* remove io_table entry */
-               return OK;
+               ev->io_table[ti].fd = -1; /* remove io_table entry */
+               ret = OK;
+               break;
             case REPLENISH_BUFFERS:
-               printf("DEBUG - ev_handler - replenish buffers triggered\n");
-               /* TODO */
-               return OK;
+               printf("DEBUG - ev_handler - need to replenish buffers, requeue request\n");
+               /* TODO: I don't know if this works */
+               io_receive_init(ev, ud.fd, (io_cb) ev->io_table[ti].cbs[RECEIVE]);
+               ret = OK;
+               break;
          }
       }
    }
 
-   return ERROR;
+   return ret;
 }
 
 int
@@ -847,9 +849,10 @@ connect_handler(struct ev* ev,struct io_uring_cqe* cqe)
 int
 receive_handler(struct ev* ev,struct io_uring_cqe* cqe,void** send_buf_base,int* bid,bool is_proxy)
 {
-   int ret;
+   int ret = OK;
    struct ev_config conf = ev->conf;
    struct user_data ud = decode_user_data(cqe);
+   int t_index = ud.ind;
    struct io_buf_ring* in_br = &ev->in_br;
    struct io_buf_ring* out_br = &ev->out_br;
    *send_buf_base = (void*) (in_br->buf + *bid * conf.buf_size);
@@ -860,6 +863,7 @@ receive_handler(struct ev* ev,struct io_uring_cqe* cqe,void** send_buf_base,int*
    int nr_packets = 0;
    int in_bytes;
    int bid_start = *bid;
+   int total_in_bytes;
 
    if (cqe->res == -ENOBUFS)
    {
@@ -875,10 +879,11 @@ receive_handler(struct ev* ev,struct io_uring_cqe* cqe,void** send_buf_base,int*
       }
    }
 
-   in_bytes = cqe->res;
+   total_in_bytes = cqe->res;
 
    /* If the size of the buffer (this_bytes) is greater than the size of the received bytes, then continue.
     * Otherwise, we iterate over another buffer. */
+   in_bytes = cqe->res;
    while (in_bytes)
    {
       buf = &(in_br->br->bufs[*bid]);
@@ -913,11 +918,17 @@ receive_handler(struct ev* ev,struct io_uring_cqe* cqe,void** send_buf_base,int*
       }
    }
 
+   int fd = ev->io_table[t_index].fd;
+   ret = ev->io_table[t_index].cbs[RECEIVE](ev->data, fd, ret, (char*)*send_buf_base, total_in_bytes);
+
    ret = replenish_buffers(ev,in_br,bid_start,*bid);
    if (ret)
    {
-      return 1;
+      perror("replenish_buffers");
+      return ERROR;
    }
+
+   ev->bid = *bid;
 
    return 0;
 }

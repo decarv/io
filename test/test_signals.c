@@ -182,7 +182,7 @@ main(void)
    assert(expected == sigabrt_calls);
    assert(sigalrm_calls == 1);
 
-   ev_free(&ev);
+//   ev_free(&ev);
 
    return 0;
 }

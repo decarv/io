@@ -19,6 +19,10 @@ add_executable(test_signals test_signals.c)
 target_link_libraries(test_signals PRIVATE pgagroal_ev uring)
 set_target_properties(test_signals PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
 
+add_executable(test_io test_io.c)
+target_link_libraries(test_io PRIVATE pgagroal_ev uring)
+set_target_properties(test_io PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
+
 if(USE_EPOLL)
 	message(STATUS "Starting epoll tests...")
 else()
@@ -26,6 +30,7 @@ else()
 endif()
 add_test(NAME "Periodic Test" COMMAND test_periodic)
 add_test(NAME "Signal Test" COMMAND test_signals)
+add_test(NAME "IO Test" COMMAND test_io)
 
 # Uncomment
 # add_executable(test_io_server test_io_server.c)

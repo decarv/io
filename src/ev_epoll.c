@@ -83,7 +83,7 @@ io_accept_init(struct ev* ev, int fd, io_cb cb)
 int
 io_receive_init(struct ev* ev, int fd, io_cb cb)
 {
-   return io_init(ev, fd, ACCEPT, cb, NULL, 0, 0);
+   return io_init(ev, fd, RECEIVE, cb, NULL, 0, 0);
 }
 
 int
@@ -220,13 +220,21 @@ accept_handler(struct ev* ev,int ti)
 int
 receive_handler(struct ev* ev,int ti)
 {
+   int ret = OK;
+   int nrecv = 0;
+   int total_recv = 0;
+   int capacity = MISC_LENGTH;
    int fd = ev->ev_table[ti].epoll_ev.data.fd;
-   char buffer[MISC_LENGTH];
-   int nrecv;
+   void * buf = malloc(sizeof(char) * capacity);
+   if (!buf)
+   {
+      perror("Failed to allocate memory");
+      return ALLOC_ERROR;
+   }
 
    while (1)
    {
-      nrecv = recv(fd,buffer,sizeof(buffer),0);
+      nrecv = recv(fd,buf,capacity,0);
       if (nrecv == -1)
       {
          if (errno != EAGAIN && errno != EWOULDBLOCK)
@@ -237,16 +245,42 @@ receive_handler(struct ev* ev,int ti)
       }
       else if (nrecv == 0) /* connection closed */
       {
-         return CLOSE_FD;
+         ret = CLOSE_FD;
+         goto clean;
+      }
+      total_recv += nrecv;
+      if (total_recv == capacity && capacity < MAX_BUF_LEN)
+      {
+         int new_capacity = capacity * 2;
+         if (new_capacity > MAX_BUF_LEN)
+         {
+            new_capacity = MAX_BUF_LEN;
+         }
+         char *new_buf = realloc(buf, new_capacity);
+         if (!new_buf)
+         {
+            perror("Failed to reallocate memory");
+            ret = ALLOC_ERROR;
+            goto clean;
+         }
+         buf = new_buf;
+         capacity = new_capacity;
+      }
+
+      if (capacity == MAX_BUF_LEN && total_recv == capacity)
+      {
+         break;
       }
    }
 
    if (ev->ev_table[ti].cb.io)
    {
-      return ev->ev_table[ti].cb.io(ev->data,fd,0,(void*) buffer,nrecv);
+      ret = ev->ev_table[ti].cb.io(ev->data,fd,0,(void*) buf,total_recv);
    }
 
-   return OK;
+clean:
+   free(buf);
+   return ret;
 }
 
 int

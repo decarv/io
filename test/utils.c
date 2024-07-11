@@ -8,9 +8,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netdb.h>
-
+#include <unistd.h>
 /* io lib */
-#include "ev_io_uring.h"
 
 int
 prepare_out_socket(const char* port)
@@ -53,8 +52,6 @@ prepare_out_socket(const char* port)
    }
 
    freeaddrinfo(res);
-
-   printf("created socket -> %d\n", fd);
 
    return fd;
 }
@@ -107,8 +104,6 @@ prepare_in_socket(const char* port)
       perror("listen\n");
       return 1;
    }
-
-   printf("Server listening on port %s...\n", port);
 
    return fd;
 }

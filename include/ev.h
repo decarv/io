@@ -32,6 +32,9 @@
 
 #define EMPTY -1
 #define MISC_LENGTH (1 << 15) /* 8KiB */
+#define INITIAL_BUF_LEN (1 << 15) /* 8KiB */
+#define MAX_BUF_LEN     (1 << 17) /* 32KiB */
+
 
 #define MAX_FDS      (1 << 3)  /* this is limited by the value of 'ind' in user data */
 #define MAX_SIGNALS  (1 << 3)  /* this is limited by the value of 'ind' in user data */
@@ -39,26 +42,26 @@
 #define MAX_EVENTS   (MAX_FDS + MAX_SIGNALS + MAX_PERIODIC)
 
 enum supported_events {
-    ACCEPT    = 0,
-    RECEIVE   = 1,
-    SEND      = 2,
-    CONNECT   = 3,
-    SOCKET    = 4,
-    READ      = 5,
-    WRITE     = 6,
+    ACCEPT       = 0,
+    RECEIVE      = 1,
+    SEND         = 2,
+    CONNECT      = 3,
+    SOCKET       = 4,
+    READ         = 5,
+    WRITE        = 6,
     IO_EVENTS_NR = 7,  /* TODO: This is ugly. Find a better way to do this. */
-    SIGNAL    = 8,
-    PERIODIC  = 9,
-    EVENTS_NR = 10,
+    SIGNAL       = 8,
+    PERIODIC     = 9,
+    EVENTS_NR    = 10,
 };
 
 enum supported_signals {
     _SIGTERM = 0,
-    _SIGHUP,
-    _SIGINT,
-    _SIGTRAP,
-    _SIGABRT,
-    _SIGALRM,
+    _SIGHUP  = 1,
+    _SIGINT  = 2,
+    _SIGTRAP = 3,
+    _SIGABRT = 4,
+    _SIGALRM = 5,
 };
 
 /* Return codes used for passing states around */
@@ -68,6 +71,7 @@ enum return_codes {
    CLOSE_FD,
    REPLENISH_BUFFERS,
    REARMED,
+   ALLOC_ERROR,
 };
 
 /* Define a function pointer type for I/O callbacks */
@@ -160,7 +164,7 @@ struct ev_setup_opts
 
 struct ev_config
 {
-#ifdef USE_IO_URING
+#ifndef USE_EPOLL
    int entries;
 
    /* startup configuration */
@@ -202,7 +206,7 @@ struct ev
     int monitored_signals[MAX_SIGNALS];
     struct signal_entry sig_table[MAX_SIGNALS];
 
-#ifdef USE_IO_URING
+#ifndef USE_EPOLL
 
    int io_count;
    struct io_entry io_table[MAX_FDS];
@@ -240,7 +244,7 @@ struct ev
 int ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts);
 int ev_free(struct ev** ev_out);
 int ev_loop(struct ev* ev);
-#ifdef USE_IO_URING
+#ifndef USE_EPOLL
 int ev_handler(struct ev* ev,struct io_uring_cqe* cqe);
 #else
 int ev_handler(struct ev* ev, int);
@@ -257,7 +261,7 @@ int io_receive_init(struct ev* ev,int fd,io_cb cb);
 int io_connect_init(struct ev* ev,int fd,io_cb cb,union sockaddr_u* addr);
 int io_send_init(struct ev* ev,int fd,io_cb cb,void* buf,int buf_len,int bid);
 int io_table_insert(struct ev* ev, int fd, io_cb cb, int event);
-#ifdef USE_IO_URING
+#ifndef USE_EPOLL
 int io_handler(struct ev* ev, struct io_uring_cqe* cqe);
 int send_handler(struct ev* ev, struct io_uring_cqe* cqe);
 int receive_handler(struct ev* ev, struct io_uring_cqe* cqe, void** buf, int*, bool is_proxy);
@@ -293,14 +297,14 @@ int signal_table_insert(struct ev* ev, int signum, signal_cb cb);
  * registering the signals to a table. It is cleaner and it is consistent with the rest
  * of the event handling.
  */
-#ifdef USE_IO_URING
+#ifndef USE_EPOLL
 int signal_handler(struct ev* ev, int t_index, int signum);
 #else
 int signal_handler(struct ev* ev, int ti);
-#endif /* USE_IO_URING */
+#endif /* USE_EPOLL */
 
 
-#ifdef USE_IO_URING
+#ifdef USE_EPOLL
 /**
  * @param fd: either the file descriptor or signum.
  * @param ind: respective table index where the callback is found.
