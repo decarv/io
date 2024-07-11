@@ -31,10 +31,9 @@
 #define BUFFER_COUNT 8        /* 4KiB * 8 = 32 KiB */
 
 #define EMPTY -1
-#define MISC_LENGTH (1 << 15) /* 8KiB */
-#define INITIAL_BUF_LEN (1 << 15) /* 8KiB */
-#define MAX_BUF_LEN     (1 << 17) /* 32KiB */
-
+#define MISC_LENGTH (1 << 12) /* 8 KiB */
+#define INITIAL_BUF_LEN (1 << 12) /* 8 KiB */
+#define MAX_BUF_LEN     (1 << 17) /* 128 KiB */
 
 #define MAX_FDS      (1 << 3)  /* this is limited by the value of 'ind' in user data */
 #define MAX_SIGNALS  (1 << 3)  /* this is limited by the value of 'ind' in user data */
@@ -162,35 +161,11 @@ struct ev_setup_opts
    int buf_size;
 };
 
+#if USE_EPOLL
+
 struct ev_config
 {
-#ifndef USE_EPOLL
-   int entries;
-
-   /* startup configuration */
-   bool napi;
-   bool sqpoll;
-   bool use_huge;
-   bool defer_tw;
-   bool snd_ring;
-   bool snd_bundle;
-   bool fixed_files;
-   bool ipv6;
-
-   /* ring mapped buffers */
-   int buf_size;
-   int buf_count;
-   size_t buffer_ring_size;
-   struct io_uring_buf_ring* buffer_rings;
-   uint8_t* buffer_base;
-
-   int br_mask;
-   struct io_uring_params params;
-
-#else /* use epoll */
    int flags;
-
-#endif
 };
 
 struct ev
@@ -206,29 +181,7 @@ struct ev
     int monitored_signals[MAX_SIGNALS];
     struct signal_entry sig_table[MAX_SIGNALS];
 
-#ifndef USE_EPOLL
-
-   int io_count;
-   struct io_entry io_table[MAX_FDS];
-
-   uint64_t expirations;
-   int periodic_count;
-   struct periodic_entry per_table[MAX_PERIODIC];
-
-   struct io_uring ring;
-   struct io_uring_sqe* sqe;
-   struct io_uring_cqe* cqe;
-   int bid; /* next buffer ring id */
-   int next_out_bid;
-   struct io_buf_ring in_br;
-   struct io_buf_ring out_br;
-
-  /* TODO: Do iovecs ?
-    *  int iovecs_nr;
-    *  struct iovec *iovecs;
-    */
-
-#else /* use epoll */
+    void* data;  /* pointer to user defined data that can be retrieved from inside of functions */
 
    int epoll_fd;
    int flags;
@@ -236,21 +189,73 @@ struct ev
    struct ev_entry ev_table[MAX_EVENTS];
    int ev_table_imap[MAX_EVENTS];  /* inverse map: fd -> ev_table_i */
    int signalfd;
-#endif
+   };
+
+
+#else /* use io_uring */
+
+struct ev_config
+{
+    int entries;
+    /* startup configuration */
+    bool napi;
+    bool sqpoll;
+    bool use_huge;
+    bool defer_tw;
+    bool snd_ring;
+    bool snd_bundle;
+    bool fixed_files;
+    bool ipv6;
+    /* ring mapped buffers */
+    int buf_size;
+    int buf_count;
+    size_t buffer_ring_size;
+    struct io_uring_buf_ring* buffer_rings;
+    uint8_t* buffer_base;
+    int br_mask;
+    struct io_uring_params params;
+};
+
+struct ev
+        {
+    atomic_bool running; /* used to kill the loop */
+
+    struct ev_config conf;
+    int id;
+
+    sigset_t sigset;
+
+    int signal_count;
+    int monitored_signals[MAX_SIGNALS];
+    struct signal_entry sig_table[MAX_SIGNALS];
 
     void* data;  /* pointer to user defined data that can be retrieved from inside of functions */
+
+    int io_count;
+    struct io_entry io_table[MAX_FDS];
+
+    uint64_t expirations;
+    int periodic_count;
+    struct periodic_entry per_table[MAX_PERIODIC];
+
+    struct io_uring ring;
+    struct io_uring_sqe* sqe;
+    struct io_uring_cqe* cqe;
+
+    int bid; /* next buffer ring id */
+    int next_out_bid;
+    struct io_buf_ring in_br;
+    struct io_buf_ring out_br;
+    /* TODO: Do iovecs ?
+      *  int iovecs_nr;
+      *  struct iovec *iovecs;
+      */
 };
+#endif
 
 int ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts);
 int ev_free(struct ev** ev_out);
 int ev_loop(struct ev* ev);
-#ifndef USE_EPOLL
-int ev_handler(struct ev* ev,struct io_uring_cqe* cqe);
-#else
-int ev_handler(struct ev* ev, int);
-int ev_table_insert(struct ev* ev, int fd, int event, event_cb cb, void* buf, size_t buf_len);
-int ev_table_remove(struct ev* ev, int ti);
-#endif
 int ev_setup(struct ev_config* conf, struct ev_setup_opts opts);
 
 int io_init(struct ev* io, int fd, int event, io_cb callback, void* buf, size_t buf_len, int bid);
@@ -261,20 +266,6 @@ int io_receive_init(struct ev* ev,int fd,io_cb cb);
 int io_connect_init(struct ev* ev,int fd,io_cb cb,union sockaddr_u* addr);
 int io_send_init(struct ev* ev,int fd,io_cb cb,void* buf,int buf_len,int bid);
 int io_table_insert(struct ev* ev, int fd, io_cb cb, int event);
-#ifndef USE_EPOLL
-int io_handler(struct ev* ev, struct io_uring_cqe* cqe);
-int send_handler(struct ev* ev, struct io_uring_cqe* cqe);
-int receive_handler(struct ev* ev, struct io_uring_cqe* cqe, void** buf, int*, bool is_proxy);
-int accept_handler(struct ev* ev, struct io_uring_cqe* cqe);
-int connect_handler(struct ev* ev, struct io_uring_cqe* cqe);
-int socket_handler(struct ev* ev, struct io_uring_cqe* cqe, void** buf, int*);
-#else
-int io_handler(struct ev* ev);
-int send_handler(struct ev* ev, int t_index);
-int receive_handler(struct ev* ev, int t_index);
-int accept_handler(struct ev* ev, int t_index);
-int connect_handler(struct ev* ev, int t_index);
-#endif
 
 /** Creates a periodic timeout.
  * Uses io_uring_prep_timeout to create a timeout.
@@ -297,18 +288,31 @@ int signal_table_insert(struct ev* ev, int signum, signal_cb cb);
  * registering the signals to a table. It is cleaner and it is consistent with the rest
  * of the event handling.
  */
-#ifndef USE_EPOLL
-int signal_handler(struct ev* ev, int t_index, int signum);
-#else
+
+int set_non_blocking(int fd);
+
+#if USE_EPOLL
+
+int io_handler(struct ev* ev);
+int send_handler(struct ev* ev, int t_index);
+int receive_handler(struct ev* ev, int t_index);
+int accept_handler(struct ev* ev, int t_index);
+int connect_handler(struct ev* ev, int t_index);
+int ev_handler(struct ev* ev, int);
+int ev_table_insert(struct ev* ev, int fd, int event, event_cb cb, void* buf, size_t buf_len);
+int ev_table_remove(struct ev* ev, int ti);
 int signal_handler(struct ev* ev, int ti);
-#endif /* USE_EPOLL */
 
+#else
 
-#ifdef USE_EPOLL
-/**
- * @param fd: either the file descriptor or signum.
- * @param ind: respective table index where the callback is found.
- */
+int ev_handler(struct ev* ev,struct io_uring_cqe* cqe);
+int io_handler(struct ev* ev, struct io_uring_cqe* cqe);
+int send_handler(struct ev* ev, struct io_uring_cqe* cqe);
+int receive_handler(struct ev* ev, struct io_uring_cqe* cqe, void** buf, int*, bool is_proxy);
+int accept_handler(struct ev* ev, struct io_uring_cqe* cqe);
+int connect_handler(struct ev* ev, struct io_uring_cqe* cqe);
+int socket_handler(struct ev* ev, struct io_uring_cqe* cqe, void** buf, int*);
+int signal_handler(struct ev* ev, int t_index, int signum);
 void encode_user_data(struct io_uring_sqe* sqe,uint8_t event,uint16_t id,uint8_t bid,uint16_t fd,uint16_t ind);
 struct user_data decode_user_data(struct io_uring_cqe* cqe);
 struct io_uring_sqe* get_sqe(struct ev* ev);
@@ -316,8 +320,7 @@ int rearm_receive(struct ev* ev, int fd, int t_index);
 int prepare_send(struct ev* ev, int fd, void* buf, size_t data_len, int t_index);
 int ev_setup_buffers(struct ev* ev);
 int replenish_buffers(struct ev* ev, struct io_buf_ring *br, int bid_start, int bid_end);
-#endif
 
-int set_non_blocking(int fd);
+#endif
 
 #endif /* EV_H */
