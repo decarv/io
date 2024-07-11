@@ -12,7 +12,7 @@
 #define nr_clients 1
 #define nr_messages 50
 
-#define MAX_LENGTH (1 << 16) /* 64 Kib */
+#define MAX_LENGTH (1 << 17) /* 128 Kib */
 
 struct connection {
     int id;
