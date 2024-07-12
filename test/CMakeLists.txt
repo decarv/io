@@ -9,18 +9,23 @@ enable_testing()
 set(BIN_DIR ${CMAKE_BINARY_DIR}/test)
 file(MAKE_DIRECTORY ${BIN_DIR})
 
-include_directories(${CMAKE_SOURCE_DIR}/include ${LIBURING_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/test)
-
+include_directories(${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/test)
 add_executable(test_periodic test_periodic.c)
-target_link_libraries(test_periodic PRIVATE pgagroal_ev uring)
-set_target_properties(test_periodic PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
-
 add_executable(test_signals test_signals.c)
-target_link_libraries(test_signals PRIVATE pgagroal_ev uring)
-set_target_properties(test_signals PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
-
 add_executable(test_io test_io.c)
-target_link_libraries(test_io PRIVATE pgagroal_ev uring)
+
+if (USE_EPOLL)
+    target_link_libraries(test_periodic PRIVATE pgagroal_ev pthread)
+    target_link_libraries(test_signals PRIVATE pgagroal_ev pthread)
+    target_link_libraries(test_io PRIVATE pgagroal_ev pthread)
+else()
+    target_link_libraries(test_periodic PRIVATE pgagroal_ev uring pthread)
+    target_link_libraries(test_signals PRIVATE pgagroal_ev uring pthread)
+    target_link_libraries(test_io PRIVATE pgagroal_ev uring pthread)
+endif()
+
+set_target_properties(test_periodic PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
+set_target_properties(test_signals PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
 set_target_properties(test_io PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
 
 if(USE_EPOLL)
@@ -28,6 +33,7 @@ if(USE_EPOLL)
 else()
 	message(STATUS "Starting io_uring tests...")
 endif()
+
 add_test(NAME "Periodic Test" COMMAND test_periodic)
 add_test(NAME "Signal Test" COMMAND test_signals)
 add_test(NAME "IO Test" COMMAND test_io)

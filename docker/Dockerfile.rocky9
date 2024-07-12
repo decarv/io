@@ -14,27 +14,21 @@ RUN rm -rf uring_build \
      && mkdir uring_build \
      && cd uring_build \
      && cmake .. \
-     && make \
+     && make
      
+WORKDIR /ev
 
 RUN rm -rf epoll_build \
      && mkdir epoll_build \
      && cd epoll_build \
-     && cmake .. \
+     && cmake .. -DUSE_EPOLL=ON \
      && make
      
-WORKDIR /ev/build
+WORKDIR /ev
 
-COPY 
+COPY ./docker/entrypoint.sh . 
 
-ENTRYPOINT ["ctest" ,"--output-on-failure"]
+RUN chmod +x entrypoint.sh
 
-# WORKDIR /ev
-# 
-# RUN rm -rf build \
-#     && mkdir build \
-#     && cd build \
-#     && cmake .. -DUSE_EPOLL=ON \
-#     && make \
-#     && ctest
-#    
+ENTRYPOINT ["/ev/entrypoint.sh"]
+

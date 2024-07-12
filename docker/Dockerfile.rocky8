@@ -7,18 +7,29 @@ COPY .. .
 RUN dnf install -y gcc \
     && dnf install -y cmake
 
-RUN rm -rf build \
-    && mkdir build \
-    && cd build \
-    && cmake .. \
-    && make \
-    && ctest \
-    && cd ..
+WORKDIR /ev
 
-RUN rm -rf build \
-    && mkdir build \
-    && cd build \
-    && cmake .. -DUSE_EPOLL \
-    && make \
-    && ctest
+# this will fallback to epoll
+# RUN rm -rf uring_build \
+#      && mkdir uring_build \
+#      && cd uring_build \
+#      && cmake .. \
+#      && make
+#      
 
+WORKDIR /ev
+
+RUN rm -rf epoll_build \
+     && mkdir epoll_build \
+     && cd epoll_build  \
+     && cmake .. -DUSE_EPOLL=ON \
+     && make
+     
+WORKDIR /ev
+
+COPY ./docker/entrypoint.sh . 
+
+RUN chmod +x entrypoint.sh
+
+ENTRYPOINT ["./entrypoint.sh"]
+ 

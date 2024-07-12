@@ -6,7 +6,9 @@ then
     exit 1
 fi
 
+# docker assumes everything is executed from root directory
 cd ..
+
 docker build -t ev-rockylinux9-test-build -f docker/Dockerfile.rocky9 .
 docker run --privileged -it ev-rockylinux9-test-build
 

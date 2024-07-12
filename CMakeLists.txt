@@ -61,6 +61,7 @@ else ()
     add_definitions(-DUSE_EPOLL)
     set(BACKEND_SRC "src/ev_epoll.c")
     include_directories(${CMAKE_SOURCE_DIR}/include)
+    option(USE_EPOLL ON)
 endif()
 
 set(SOURCE_FILES ${BACKEND_SRC})
