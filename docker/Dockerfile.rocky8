@@ -1,1 +1,24 @@
 FROM rockylinux:8
+
+WORKDIR /ev
+
+COPY .. .
+
+RUN dnf install -y gcc \
+    && dnf install -y cmake
+
+RUN rm -rf build \
+    && mkdir build \
+    && cd build \
+    && cmake .. \
+    && make \
+    && ctest \
+    && cd ..
+
+RUN rm -rf build \
+    && mkdir build \
+    && cd build \
+    && cmake .. -DUSE_EPOLL \
+    && make \
+    && ctest
+

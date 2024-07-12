@@ -16,11 +16,12 @@
 #include <stdatomic.h>
 
 /* project */
-#include "../include/ev.h"
+#include "ev.h"
 
 int
 ev_setup(struct ev_config* conf, struct ev_setup_opts opts)
 {
+   printf("epoll ev_setup");
    conf->flags = 0;
    return 0;
 }

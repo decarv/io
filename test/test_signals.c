@@ -129,7 +129,7 @@ main(void)
 {
    int ret;
    struct conn *c = malloc(sizeof(struct conn));
-   pthread_t pthread, killer_thread;
+   pthread_t pthread;
 
    ret = ev_init(&c->ev, c, (struct ev_setup_opts) {0});
    if (ret)

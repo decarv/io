@@ -6,9 +6,6 @@
  *
  */
 
-/* ev */
-#include "../include/ev.h"
-
 /* system */
 #include <sys/eventfd.h>
 #include <unistd.h>
@@ -19,9 +16,10 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <signal.h>
-#include <sys/timerfd.h>
 #include <time.h>
-#include <sys/poll.h>
+
+/* libev */
+#include "ev.h"
 
 //static struct ev_config conf = { 0 }; /* TODO: no need to be global anymore, it's directly associated with context */
 
@@ -751,35 +749,6 @@ periodic_table_insert(struct ev* ev,struct __kernel_timespec ts,periodic_cb cb)
    ev->per_table[i].cb = cb;
 
    return i;
-}
-
-int
-periodic_init_epoll(struct ev* ev,double interval)
-{
-   int ret;
-   int fd;
-   struct itimerspec new_value;
-   memset(&new_value,0,sizeof(struct itimerspec));
-
-   fd = timerfd_create(CLOCK_MONOTONIC,0);
-   if (fd == -1)
-   {
-      perror("timerfd_create\n");
-      return 1;
-   }
-
-   new_value.it_interval.tv_sec = (int)interval;
-   new_value.it_interval.tv_nsec = (interval - (int)interval) * 1e9;
-   new_value.it_value.tv_sec = (int)interval;
-   new_value.it_value.tv_nsec = (interval - (int)interval) * 1e9;
-
-   if (timerfd_settime(fd,0,&new_value,NULL) == -1)
-   {
-      perror("timerfd_settime");
-      return -1;
-   }
-
-   return fd;
 }
 
 int

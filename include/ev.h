@@ -15,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
-#include <liburing.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -24,7 +23,15 @@
 #include <sys/mman.h>
 #include <sys/signalfd.h>
 #include <stdatomic.h>
+#include <stdbool.h>
+#include <signal.h>
+
+
+#ifdef USE_EPOLL
 #include <sys/epoll.h>
+#else
+#include <liburing.h>
+#endif
 
 #define ALIGNMENT sysconf(_SC_PAGESIZE)  /* TODO: should be used for huge_pages */
 #define BUFFER_SIZE (1 << 14) /* 4KiB */
@@ -125,20 +132,6 @@ struct signal_entry
     signal_cb cb;
 };
 
-struct periodic_entry
-{
-    struct __kernel_timespec ts;
-    periodic_cb cb;
-};
-
-struct ev_entry
-{
-   int event;
-   event_cb cb;
-   void * buf;
-   size_t buf_len;
-   struct epoll_event epoll_ev;
-};
 
 union sockaddr_u
 {
@@ -162,6 +155,15 @@ struct ev_setup_opts
 };
 
 #if USE_EPOLL
+
+struct ev_entry
+{
+   int event;
+   event_cb cb;
+   void * buf;
+   size_t buf_len;
+   struct epoll_event epoll_ev;
+};
 
 struct ev_config
 {
@@ -193,6 +195,12 @@ struct ev
 
 
 #else /* use io_uring */
+
+struct periodic_entry
+{
+    struct __kernel_timespec ts;
+    periodic_cb cb;
+};
 
 struct ev_config
 {
@@ -276,7 +284,6 @@ int io_table_insert(struct ev* ev, int fd, io_cb cb, int event);
  */
 int periodic_init(struct ev* ev, int msec, periodic_cb cb);
 int periodic_stop();
-int periodic_table_insert(struct ev* ev, struct __kernel_timespec ts, periodic_cb cb);
 int periodic_handler(struct ev* ev, int t_index);
 
 int signal_init(struct ev* io, int signum, signal_cb cb);
@@ -305,6 +312,7 @@ int signal_handler(struct ev* ev, int ti);
 
 #else
 
+int periodic_table_insert(struct ev* ev, struct __kernel_timespec ts, periodic_cb cb);
 int ev_handler(struct ev* ev,struct io_uring_cqe* cqe);
 int io_handler(struct ev* ev, struct io_uring_cqe* cqe);
 int send_handler(struct ev* ev, struct io_uring_cqe* cqe);

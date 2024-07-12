@@ -8,13 +8,33 @@ RUN dnf install -y gcc \
     && dnf --enablerepo=crb install -y liburing-devel \
     && dnf install -y cmake
 
-RUN rm -rf build \
-    && mkdir build \
-    && cd build \
-    && cmake .. \
-    && make
+WORKDIR /ev
 
+RUN rm -rf uring_build \
+     && mkdir uring_build \
+     && cd uring_build \
+     && cmake .. \
+     && make \
+     
+
+RUN rm -rf epoll_build \
+     && mkdir epoll_build \
+     && cd epoll_build \
+     && cmake .. \
+     && make
+     
 WORKDIR /ev/build
 
-# run when starting the container
-CMD ["ctest"]
+COPY 
+
+ENTRYPOINT ["ctest" ,"--output-on-failure"]
+
+# WORKDIR /ev
+# 
+# RUN rm -rf build \
+#     && mkdir build \
+#     && cd build \
+#     && cmake .. -DUSE_EPOLL=ON \
+#     && make \
+#     && ctest
+#    
