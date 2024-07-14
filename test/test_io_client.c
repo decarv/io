@@ -10,9 +10,10 @@
 
 #define NUM_CLIENTS 1
 #define NUM_MESSAGES 50
-#define MESSAGE_LENGTH (1<<12)
+#define MESSAGE_LENGTH (1 << 12)
 
-void send_message(int sock, int client, int message)
+void
+send_message(int sock, int client, int message)
 {
    char msg[MESSAGE_LENGTH];
    int len = snprintf(msg, sizeof(msg), "Message %d from client %d\n", message, client);
@@ -24,19 +25,21 @@ void send_message(int sock, int client, int message)
    }
 }
 
-int main(int argc, char* argv[])
+int
+main(int argc, char* argv[])
 {
    int nr_clients = NUM_CLIENTS;
    int nr_messages = NUM_MESSAGES;
 
-   if (argc > 2) {
-	nr_clients = atoi(argv[1]);
-	nr_messages = atoi(argv[2]);
+   if (argc > 2)
+   {
+      nr_clients = atoi(argv[1]);
+      nr_messages = atoi(argv[2]);
    }
 
    printf("Starting tests for %d clients and %d messages\n", nr_clients, nr_messages);
 
-   const char * port = "8800";
+   const char* port = "8800";
    pid_t pid;
    int socket;
    for (int client = 1; client <= nr_clients; client++)

@@ -21,7 +21,7 @@
 /* libev */
 #include "ev.h"
 
-//static struct ev_config conf = { 0 }; /* TODO: no need to be global anymore, it's directly associated with context */
+static struct ev_config conf = { 0 }; /* TODO: no need to be global anymore, it's directly associated with context */
 
 /**
  * Event Handling Interface
@@ -35,7 +35,7 @@
  */
 
 int
-ev_setup(struct ev_config* conf, struct ev_setup_opts opts)
+pgagroal_ev_setup(struct ev_config* conf, struct ev_setup_opts opts)
 {
    int ret;
 
@@ -111,7 +111,7 @@ ev_setup(struct ev_config* conf, struct ev_setup_opts opts)
 }
 
 int
-ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
+pgagroal_ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
 {
    int ret;
    struct ev* ev;
@@ -126,7 +126,7 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
 
    ev = *ev_out;
 
-   ret = ev_setup(&ev->conf, opts);
+   ret = pgagroal_ev_setup(&ev->conf, opts);
    if (ret)
    {
       fprintf(stderr, "ev_init: ev_setup\n");
@@ -163,7 +163,33 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
 }
 
 int
-ev_loop(struct ev* ev)
+pgagroal_ev_free(struct ev** ev_out)
+{
+   struct ev* ev = *ev_out;
+
+   /* free buffer rings */
+   io_uring_free_buf_ring(&ev->ring, ev->in_br.br, ev->conf.buf_count, ev->in_br.bgid);
+   ev->in_br.br = NULL;
+   io_uring_free_buf_ring(&ev->ring, ev->out_br.br, ev->conf.buf_count, ev->out_br.bgid);
+   ev->out_br.br = NULL;
+   if (ev->conf.use_huge)
+   {
+      /* TODO munmap(cbr->buf, buf_size * nr_bufs); */
+   }
+   else
+   {
+      free(ev->in_br.buf);
+      free(ev->out_br.buf);
+   }
+
+   free(ev);
+
+   *ev_out = NULL;
+   return OK;
+}
+
+int
+pgagroal_ev_loop(struct ev* ev)
 {
    int ret;
    int sig;
@@ -178,13 +204,6 @@ ev_loop(struct ev* ev)
       .tv_sec = 0,
       .tv_nsec = 100000000LL
    };
-//   struct __kernel_timespec active_ts = idle_ts;
-//   if (wait_usec > 1000000)
-//   {
-//      active_ts.tv_sec = wait_usec / 1000000;
-//      wait_usec -= active_ts.tv_sec * 1000000;
-//   }
-//   active_ts.tv_nsec = wait_usec * 1000;
    struct timespec timeout = {
       .tv_sec = 0,
       .tv_nsec = 0
@@ -278,7 +297,6 @@ ev_setup_buffers(struct ev* ev)
    ptr = in_br->buf;
    for (int i = 0; i < conf.buf_count; i++)
    {
-//      printf("add bid %d, data %p\n", i, ptr);
       io_uring_buf_ring_add(in_br->br, ptr, conf.buf_size, i, conf.br_mask, i);
       ptr += conf.buf_size;
    }
@@ -287,7 +305,6 @@ ev_setup_buffers(struct ev* ev)
    ptr = out_br->buf;
    for (int i = 0; i < conf.buf_count; i++)
    {
-//      printf("add bid %d, data %p\n", i, ptr);
       io_uring_buf_ring_add(out_br->br, ptr, conf.buf_size, i, conf.br_mask, i);
       ptr += conf.buf_size;
    }
@@ -336,7 +353,7 @@ ev_handler(struct ev* ev, struct io_uring_cqe* cqe)
 
    if (ud.event == PERIODIC)
    {
-      return periodic_handler(ev, ud.ind);
+      return pgagroal_periodic_handler(ev, ud.ind);
    }
    else if (ud.event == SIGNAL)
    {
@@ -355,13 +372,13 @@ ev_handler(struct ev* ev, struct io_uring_cqe* cqe)
  * @param buf_len: either the length of the buffer or the bid.
  */
 int
-io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid)
+pgagroal_io_init(struct ev* io,int fd,int event,io_cb callback,void* buf,size_t buf_len,int bid)
 {
    int ret = 0;
    int t_index = -1;
    int domain;
-   struct ev_config conf = ev->conf;
-   struct io_uring_sqe* sqe = get_sqe(ev);
+   struct ev_config conf = io->conf;
+   struct io_uring_sqe* sqe = get_sqe(io);
    struct io_entry* entry = NULL;
    union sockaddr_u* addr;
 
@@ -371,7 +388,7 @@ io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid
       return 1;
    }
 
-   t_index = io_table_insert(ev,fd,cb,event);
+   t_index = pgagroal_io_table_insert(io,fd,callback,event);
    if (t_index < 0)
    {
       fprintf(stderr,"io_init: io_table_insert\n");
@@ -382,25 +399,24 @@ io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid
    {
 
       case ACCEPT:
-         encode_user_data(sqe,ACCEPT,ev->id,ev->bid,fd,t_index);
+         encode_user_data(sqe,ACCEPT,io->id,io->bid,fd,t_index);
          io_uring_prep_multishot_accept(sqe,fd,NULL,NULL,0);
          break;
 
       case RECEIVE:
          io_uring_prep_recv_multishot(sqe,fd,NULL,0,0);
-         encode_user_data(sqe,RECEIVE,ev->id,0,fd,t_index);
+         encode_user_data(sqe,RECEIVE,io->id,0,fd,t_index);
          sqe->flags |= IOSQE_BUFFER_SELECT;
          sqe->buf_group = 0;
          break;
 
       case SEND:
          io_uring_prep_send(sqe,fd,buf,buf_len,MSG_WAITALL | MSG_NOSIGNAL);     /* TODO: why these flags? */
-         encode_user_data(sqe,SEND,ev->id,bid,fd,t_index);
+         encode_user_data(sqe,SEND,io->id,bid,fd,t_index);
          break;
 
       case CONNECT:
          addr = (union sockaddr_u*)buf;
-         /* expects addr to be set correctly */
          if (conf.ipv6)
          {
             io_uring_prep_connect(sqe,fd,(struct sockaddr*) &addr->addr6,sizeof(struct sockaddr_in6));
@@ -409,7 +425,7 @@ io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid
          {
             io_uring_prep_connect(sqe,fd,(struct sockaddr*) &addr->addr4,sizeof(struct sockaddr_in));
          }
-         encode_user_data(sqe,CONNECT,ev->id,0,fd,t_index);
+         encode_user_data(sqe,CONNECT,io->id,0,fd,t_index);
          break;
 
       case SOCKET:
@@ -422,12 +438,12 @@ io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid
             domain = AF_INET;
          }
          io_uring_prep_socket(sqe,domain,SOCK_STREAM,0,0);         /* TODO: WHAT CAN BE USED HERE ? */
-         encode_user_data(sqe,SOCKET,ev->id,bid,0,t_index);
+         encode_user_data(sqe,SOCKET,io->id,bid,0,t_index);
          break;
 
       case READ: /* unused */
          io_uring_prep_read(sqe,fd,buf,buf_len,0);
-         encode_user_data(sqe,SIGNAL,ev->id,bid,fd,t_index);
+         encode_user_data(sqe,SIGNAL,io->id,bid,fd,t_index);
          break;
 
       default:
@@ -439,37 +455,37 @@ io_init(struct ev* ev,int fd,int event,io_cb cb,void* buf,size_t buf_len,int bid
 }
 
 int
-io_accept_init(struct ev* ev,int fd,io_cb cb)
+pgagroal_io_accept_init(struct ev* ev,int fd,io_cb cb)
 {
-   return io_init(ev,fd,ACCEPT,cb,NULL,0,-1);
+   return pgagroal_io_init(ev,fd,ACCEPT,cb,NULL,0,-1);
 }
 
 int
-io_read_init(struct ev* ev,int fd,io_cb cb)
+pgagroal_io_read_init(struct ev* ev,int fd,io_cb cb)
 {
-   return io_init(ev,fd,READ,cb,NULL,0,-1);
+   return pgagroal_io_init(ev,fd,READ,cb,NULL,0,-1);
 }
 
 int
-io_send_init(struct ev* ev,int fd,io_cb cb,void* buf,int buf_len,int bid)
+pgagroal_io_send_init(struct ev* ev,int fd,io_cb cb,void* buf,int buf_len,int bid)
 {
-   return io_init(ev,fd,SEND,cb,buf,buf_len,bid);
+   return pgagroal_io_init(ev,fd,SEND,cb,buf,buf_len,bid);
 }
 
 int
-io_receive_init(struct ev* ev,int fd,io_cb cb)
+pgagroal_io_receive_init(struct ev* ev,int fd,io_cb cb)
 {
-   return io_init(ev,fd,RECEIVE,cb,NULL,0,-1);
+   return pgagroal_io_init(ev,fd,RECEIVE,cb,NULL,0,-1);
 }
 
 int
-io_connect_init(struct ev* ev,int fd,io_cb cb,union sockaddr_u* addr)
+pgagroal_io_connect_init(struct ev* ev,int fd,io_cb cb,union sockaddr_u* addr)
 {
-   return io_init(ev,fd,CONNECT,cb,(void*)addr,0,-1);
+   return pgagroal_io_init(ev,fd,CONNECT,cb,(void*)addr,0,-1);
 }
 
 int
-io_table_insert(struct ev* ev,int fd,io_cb cb,int event)
+pgagroal_io_table_insert(struct ev* ev,int fd,io_cb cb,int event)
 {
    int i;
    const int io_table_size = sizeof(ev->io_table) / sizeof(struct io_entry);
@@ -538,7 +554,7 @@ io_handler(struct ev* ev,struct io_uring_cqe* cqe)
             case REPLENISH_BUFFERS:
                printf("DEBUG - ev_handler - need to replenish buffers, requeue request\n");
                /* TODO: I don't know if this works */
-               io_receive_init(ev, ud.fd, (io_cb) ev->io_table[ti].cbs[RECEIVE]);
+               pgagroal_io_receive_init(ev,ud.fd,(io_cb) ev->io_table[ti].cbs[RECEIVE]);
                ret = OK;
                break;
          }
@@ -578,13 +594,13 @@ replenish_buffers(struct ev* ev,struct io_buf_ring* br,int bid_start,int bid_end
  */
 
 int
-signal_init(struct ev* ev,int signum,signal_cb cb)
+pgagroal_signal_init(struct ev* io,int signum,signal_cb cb)
 {
    int ret;
    int t_ind;
 
    /* register signal */
-   t_ind = signal_table_insert(ev,signum,cb);
+   t_ind = pgagroal_signal_table_insert(io,signum,cb);
    if (t_ind < 0)  /* TODO: t_ind serves no purpose in current implementation */
    {
       fprintf(stderr,"signal_init: signal_table_insert\n");
@@ -592,9 +608,9 @@ signal_init(struct ev* ev,int signum,signal_cb cb)
    }
 
    /* prepare signal */
-   sigaddset(&ev->sigset,signum);
+   sigaddset(&io->sigset,signum);
 
-   ret = sigprocmask(SIG_BLOCK,&ev->sigset,NULL);
+   ret = sigprocmask(SIG_BLOCK,&io->sigset,NULL);
    if (ret == -1)
    {
       fprintf(stdout,"sigprocmask\n");
@@ -605,7 +621,7 @@ signal_init(struct ev* ev,int signum,signal_cb cb)
 }
 
 int
-signal_table_insert(struct ev* ev,int signum,signal_cb cb)
+pgagroal_signal_table_insert(struct ev* ev,int signum,signal_cb cb)
 {
    int i;
 
@@ -713,7 +729,7 @@ signal_handler(struct ev* ev,int t_index,int signum)
  */
 
 int
-periodic_init(struct ev* ev,int msec,periodic_cb cb)
+pgagroal_periodic_init(struct ev* ev,int msec,periodic_cb cb)
 {
    /* register */
    struct __kernel_timespec ts = {
@@ -752,7 +768,7 @@ periodic_table_insert(struct ev* ev,struct __kernel_timespec ts,periodic_cb cb)
 }
 
 int
-periodic_handler(struct ev* ev,int t_index)
+pgagroal_periodic_handler(struct ev* ev,int t_index)
 {
    if (t_index < 0 || t_index >= ev->periodic_count)
    {
@@ -888,7 +904,7 @@ receive_handler(struct ev* ev,struct io_uring_cqe* cqe,void** send_buf_base,int*
    }
 
    int fd = ev->io_table[t_index].fd;
-   ret = ev->io_table[t_index].cbs[RECEIVE](ev->data, fd, ret, (char*)*send_buf_base, total_in_bytes);
+   ret = ev->io_table[t_index].cbs[RECEIVE](ev->data,fd,ret,(char*)*send_buf_base,total_in_bytes);
 
    ret = replenish_buffers(ev,in_br,bid_start,*bid);
    if (ret)

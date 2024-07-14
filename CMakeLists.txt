@@ -28,7 +28,7 @@ include(CheckLinkerFlag)
 include(FindPackageHandleStandardArgs)
 include(GNUInstallDirs)
 
-set(CMAKE_BUILD_TYPE "Release")
+set(CMAKE_BUILD_TYPE "Debug")
 
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build, options are: Debug Release Performance" FORCE)
@@ -49,28 +49,32 @@ if(NOT COMPILER_SUPPORTS_C17)
     message(FATAL_ERROR "The compiler ${CMAKE_C_COMPILER} has no C17 support. Please use a different C compiler.")
 endif()
 
-option(USE_EPOLL "Use epoll as the backend instead of io_uring" OFF)
-
-find_package(liburing 2.5)
-if (LIBURING_FOUND AND NOT USE_EPOLL)
-    message(STATUS "Backend set to io_uring.")
-    set(BACKEND_SRC src/ev_io_uring.c)
-    include_directories(${LIBURING_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/include)
-else ()
-    message(STATUS "Backend set to epoll.")
-    add_definitions(-DUSE_EPOLL)
-    set(BACKEND_SRC "src/ev_epoll.c")
-    include_directories(${CMAKE_SOURCE_DIR}/include)
-    option(USE_EPOLL ON)
+#
+# ev backend
+#
+option(USE_URING "Use either io_uring or epoll as Linux event handling backend" ON)
+find_package(Liburing 2.5)
+if (NOT LIBURING_FOUND)
+        option(USE_URING OFF)
+        message(STATUS "liburing found")
 endif()
 
-set(SOURCE_FILES ${BACKEND_SRC})
-add_library(pgagroal_ev STATIC ${SOURCE_FILES})
+if (USE_URING)
+  add_compile_options(-DUSE_URING=1)
+  include_directories(${LIBURING_INCLUDE_DIRS})
+  link_libraries(${LIBURING_LIBRARY})
+  message(STATUS "pgagroal ev handling backend: io_uring")
+else ()
+  add_compile_options(-DUSE_URING=0)
+  message(STATUS "pgagroal ev handling backend: epoll")
+endif()
 
-# link luring
-#if (LIBURING_FOUND)
-#    target_link_libraries(pgagroal_ev ${LIBURING_LIBRARIES})
-#endif()
+set(SOURCE_FILES "src/ev.c")
+add_library(pgagroal_ev STATIC ${SOURCE_FILES})
+include_directories("include/")
+
+target_compile_options(pgagroal_ev PRIVATE -g)
+target_compile_options(pgagroal_ev PRIVATE -O0)
 
 install(TARGETS pgagroal_ev DESTINATION ${CMAKE_BINARY_DIR})
 

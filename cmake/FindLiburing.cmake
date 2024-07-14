@@ -9,7 +9,7 @@ find_library(LIBURING_LIBRARY
 )
 
 include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(liburing DEFAULT_MSG LIBURING_LIBRARY LIBURING_INCLUDE_DIR)
+find_package_handle_standard_args(Liburing DEFAULT_MSG LIBURING_LIBRARY LIBURING_INCLUDE_DIR)
 
 if(LIBURING_FOUND)
     set(LIBURING_LIBRARIES ${LIBURING_LIBRARY})

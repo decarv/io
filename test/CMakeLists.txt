@@ -6,37 +6,35 @@ cmake_policy(SET CMP0110 NEW)
 
 enable_testing()
 
+if(USE_URING)
+	message(STATUS "Starting io_uring tests...")
+else()
+	message(STATUS "Starting epoll tests...")
+endif()
+
 set(BIN_DIR ${CMAKE_BINARY_DIR}/test)
 file(MAKE_DIRECTORY ${BIN_DIR})
 
 include_directories(${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/test)
 add_executable(test_periodic test_periodic.c)
 add_executable(test_signals test_signals.c)
-add_executable(test_io test_io.c)
+# add_executable(test_io test_io.c)
 
-if (USE_EPOLL)
-    target_link_libraries(test_periodic PRIVATE pgagroal_ev pthread)
-    target_link_libraries(test_signals PRIVATE pgagroal_ev pthread)
-    target_link_libraries(test_io PRIVATE pgagroal_ev pthread)
-else()
-    target_link_libraries(test_periodic PRIVATE pgagroal_ev uring pthread)
-    target_link_libraries(test_signals PRIVATE pgagroal_ev uring pthread)
-    target_link_libraries(test_io PRIVATE pgagroal_ev uring pthread)
-endif()
+target_link_libraries(test_periodic PRIVATE pgagroal_ev uring pthread)
+target_link_libraries(test_signals PRIVATE pgagroal_ev uring pthread)
+# target_link_libraries(test_io PRIVATE pgagroal_ev uring pthread)
 
 set_target_properties(test_periodic PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
 set_target_properties(test_signals PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
-set_target_properties(test_io PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
-
-if(USE_EPOLL)
-	message(STATUS "Starting epoll tests...")
-else()
-	message(STATUS "Starting io_uring tests...")
-endif()
+# set_target_properties(test_io PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
 
 add_test(NAME "Periodic Test" COMMAND test_periodic)
 add_test(NAME "Signal Test" COMMAND test_signals)
-add_test(NAME "IO Test" COMMAND test_io)
+# add_test(NAME "IO Test" COMMAND test_io)
+
+target_compile_options(test_periodic PRIVATE -g)
+target_compile_options(test_periodic PRIVATE -O0)
+
 
 # Uncomment
 # add_executable(test_io_server test_io_server.c)

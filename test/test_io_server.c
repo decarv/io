@@ -8,12 +8,15 @@
 #define PORT 8801
 #define BUFFER_SIZE (1 << 14)
 
-struct event_counter {
-    int client_fd;
-    size_t bytes_received;
+struct event_counter
+{
+   int client_fd;
+   size_t bytes_received;
 };
 
-void handle_client(int client_fd) {
+void
+handle_client(int client_fd)
+{
    struct event_counter counter;
    counter.client_fd = client_fd;
    counter.bytes_received = 0;
@@ -21,7 +24,8 @@ void handle_client(int client_fd) {
    char buffer[BUFFER_SIZE];
    ssize_t bytes_read;
 
-   while ((bytes_read = read(client_fd, buffer, sizeof(buffer) - 1)) > 0) {
+   while ((bytes_read = read(client_fd, buffer, sizeof(buffer) - 1)) > 0)
+   {
       buffer[bytes_read] = '\0';
       printf("Received from client %d: %s\n", client_fd, buffer);
 
@@ -38,7 +42,9 @@ void handle_client(int client_fd) {
    printf("Client %d disconnected. Total bytes received: %zu\n", client_fd, counter.bytes_received);
 }
 
-int main() {
+int
+main()
+{
    int server_fd, client_fd;
    struct sockaddr_in server_addr, client_addr;
    socklen_t client_addr_len = sizeof(client_addr);
@@ -54,13 +60,15 @@ int main() {
    server_addr.sin_addr.s_addr = INADDR_ANY;
    server_addr.sin_port = htons(PORT);
 
-   if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+   if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0)
+   {
       perror("bind");
       close(server_fd);
       exit(EXIT_FAILURE);
    }
 
-   if (listen(server_fd, 10) < 0) {
+   if (listen(server_fd, 10) < 0)
+   {
       perror("listen");
       close(server_fd);
       exit(EXIT_FAILURE);
@@ -74,16 +82,16 @@ int main() {
       exit(EXIT_FAILURE);
    }
 
-
    printf("Server is listening on port %d\n", PORT);
 
-   while ((client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len)) >= 0)
+   while ((client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_addr_len)) >= 0)
    {
       printf("Client %d connected\n", client_fd);
       handle_client(client_fd);
    }
 
-   if (client_fd < 0) {
+   if (client_fd < 0)
+   {
       perror("accept");
       close(server_fd);
       exit(EXIT_FAILURE);

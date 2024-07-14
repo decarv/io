@@ -1,101 +1,198 @@
-/* io.h
- * Copyright (C) 2024 Henrique de Carvalho <decarv.henrique@gmail.com>
+/*
+ * Copyright (C) 2024 The pgagroal community
  *
- * This code is based on: https://git.kernel.dk/cgit/liburing/tree/examples/proxy.c
- * (C) 2024 Jens Axboe <axboe@kernel.dk>
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this list
+ * of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice, this
+ * list of conditions and the following disclaimer in the documentation and/or other
+ * materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without specific
+ * prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+ * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+ * TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * TODO:
+ *      - evaluate the replacement of tables ({io,sig,periodic}_table) for linked lists. This allows for better management;
+ *
  */
 
 #ifndef EV_H
 #define EV_H
 
 /* system */
-#include <sys/eventfd.h>
 #include <unistd.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <pthread.h>
 #include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <netdb.h>
 #include <err.h>
-#include <sys/mman.h>
-#include <sys/signalfd.h>
 #include <stdatomic.h>
 #include <stdbool.h>
-#include <signal.h>
+#include <sys/eventfd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/mman.h>
+#include <sys/signalfd.h>
 
-
-#ifdef USE_EPOLL
-#include <sys/epoll.h>
-#else
+#if USE_URING
 #include <liburing.h>
+#else
+#include <sys/epoll.h>
 #endif
 
 #define ALIGNMENT sysconf(_SC_PAGESIZE)  /* TODO: should be used for huge_pages */
 #define BUFFER_SIZE (1 << 14) /* 4KiB */
 #define BUFFER_COUNT 8        /* 4KiB * 8 = 32 KiB */
 
-#define EMPTY -1
-#define MISC_LENGTH (1 << 12) /* 8 KiB */
-#define INITIAL_BUF_LEN (1 << 12) /* 8 KiB */
-#define MAX_BUF_LEN     (1 << 17) /* 128 KiB */
+#define EMPTY (-1)
+#define INITIAL_BUFFER_SIZE (1 << 12) /* 8 KiB */
+#define MAX_BUFFER_SIZE     (1 << 17) /* 128 KiB */
 
-#define MAX_FDS      (1 << 3)  /* this is limited by the value of 'ind' in user data */
-#define MAX_SIGNALS  (1 << 3)  /* this is limited by the value of 'ind' in user data */
-#define MAX_PERIODIC (1 << 3)  /* this is limited by the value of 'ind' in user data */
-#define MAX_EVENTS   (MAX_FDS + MAX_SIGNALS + MAX_PERIODIC)
+#define EV_MAX_FDS     64
+#define MAX_IO         48  /* this is limited by the value of 'ind' in user data */
+#define MAX_SIGNALS     8  /* this is limited by the value of 'ind' in user data */
+#define MAX_PERIODIC    8  /* this is limited by the value of 'ind' in user data */
+#define MAX_EVENTS     (MAX_IO + MAX_SIGNALS + MAX_PERIODIC)
 
 enum supported_events {
-    ACCEPT       = 0,
-    RECEIVE      = 1,
-    SEND         = 2,
-    CONNECT      = 3,
-    SOCKET       = 4,
-    READ         = 5,
-    WRITE        = 6,
-    IO_EVENTS_NR = 7,  /* TODO: This is ugly. Find a better way to do this. */
-    SIGNAL       = 8,
-    PERIODIC     = 9,
-    EVENTS_NR    = 10,
+   EV_ACCEPT       = 0,
+   EV_RECEIVE      = 1,
+   EV_SEND         = 2,
+   CONNECT      = 3,
+   SOCKET       = 4,
+   READ         = 5,
+   WRITE        = 6,
+   IO_EVENTS_NR = 7,   /* TODO: This is ugly. Find a better way to do this. */
+   EV_SIGNAL       = 8,
+   EV_PERIODIC     = 9,
+   EVENTS_NR    = 10,
 };
 
+/**
+ * TODO: Delete
+ */
 enum supported_signals {
-    _SIGTERM = 0,
-    _SIGHUP  = 1,
-    _SIGINT  = 2,
-    _SIGTRAP = 3,
-    _SIGABRT = 4,
-    _SIGALRM = 5,
+   EV_SIGTERM = 0,
+   _SIGHUP  = 1,
+   _SIGINT  = 2,
+   _SIGTRAP = 3,
+   _SIGABRT = 4,
+   _SIGALRM = 5,
 };
 
-/* Return codes used for passing states around */
-enum return_codes {
-   OK = 0,
-   ERROR = 1,
-   CLOSE_FD,
-   REPLENISH_BUFFERS,
-   REARMED,
-   ALLOC_ERROR,
+/**
+ * TODO: Error handling in the rest of pgagroal code.
+ */
+enum ev_return_codes{
+   EV_OK = 0,
+   EV_ERROR = 1,
+   EV_CLOSE_FD,
+   EV_REPLENISH_BUFFERS,
+   EV_REARMED,
+   EV_ALLOC_ERROR,
 };
 
-/* Define a function pointer type for I/O callbacks */
-typedef int (*io_cb)(void* data, int fd, int err, void* buf, size_t buf_len);
-
-/* Define a function pointer type for signal callbacks */
-typedef int (*signal_cb)(void* data, int err);
-
-/* Define a function pointer type for periodic callbacks */
-typedef int (*periodic_cb)(void* data, int err);
-
-/* Define a union that can hold any of the above callback types */
-typedef union event_cb
+union sockaddr_u
 {
-    io_cb io;
-    signal_cb signal;
-    periodic_cb periodic;
-} event_cb;
+   struct sockaddr_in addr4;
+   struct sockaddr_in6 addr6;
+};
+
+
+/** 
+ * @struct ev_context
+ * @brief Context for the event handling subsystem.
+ *
+ * This structure is used to configure and manage state for event handling, the
+ * same struct is valid for any backend. If the backend does not use one flag, 
+ * the library will just ignore it.
+ *
+ * TODO:
+ *      * The context for the backend still has to be fully implemented. Currently
+ *        the library does not support different flags settings.
+ *
+ */
+struct ev_context
+{
+   /* filled in by the user */
+   int eflags;
+   int entries;
+   bool napi;
+   bool sqpoll;
+   bool use_huge;
+   bool defer_tw;
+   bool snd_ring;
+   bool snd_bundle;
+   bool fixed_files;
+   bool ipv6;
+   bool use_buffers;  /* ring mapped buffers */
+   int buf_size;      /* ring mapped buffers */
+   int buf_count;     /* ring mapped buffers */
+
+   /* filled in by the library */
+   int br_mask;
+
+#if USE_URING
+   struct io_uring_params params;
+#endif
+};
+
+
+struct ev_loop;
+
+typedef struct ev_io {
+   int type; /* leave this here */
+   int slot;
+   int fd;
+   int client_fd;
+   void* data;   
+   int size;
+   void(*cb)(struct ev_loop*,struct ev_io*watcher,int err);
+   struct ev_io *next;
+} ev_io;
+
+typedef struct ev_signal {
+   int type; /* leave this here */
+   int slot;
+   int signum;
+   void(*cb)(struct ev_loop*,struct ev_signal*watcher,int err);
+   struct ev_signal *next;
+} ev_signal;
+
+typedef struct ev_periodic {
+   int type; /* leave this here */
+   int ind;
+   int slot;
+#if USE_URING
+   struct __kernel_timespec ts;
+#else
+   int fd;
+#endif
+   void(*cb)(struct ev_loop*,struct ev_periodic*watcher,int err);
+   struct ev_periodic *next;
+} ev_periodic;
+
+// TODO: DELETE
+typedef union ev_watcher {
+        struct ev_io io;
+        struct ev_signal signal;
+        struct ev_periodic periodic;
+} ev_watcher;
+
+#if USE_URING
 
 struct io_buf_ring
 {
@@ -104,231 +201,158 @@ struct io_buf_ring
    int bgid;
 };
 
-struct user_data
-{
-    union
-    {
-        struct
-        {
-            uint8_t event;
-            uint8_t bid;    /* unused: buffer index */
-            uint16_t id;     /* unused: connection id */
-            uint16_t fd;
-            uint16_t ind;     /* index of the table used to retrieve the callback associated with the event */
-        };
-        uint64_t as_u64;
-    };
-};
-
-struct io_entry
-{
-    int fd;
-    io_cb cbs[IO_EVENTS_NR]; /* either accept, read or write callback */
-};
-
-struct signal_entry
-{
-    int signum; /* signum is not being used in the current implementation (refer to [1]) */
-    signal_cb cb;
-};
-
-
-union sockaddr_u
-{
-    struct sockaddr_in addr4;
-    struct sockaddr_in6 addr6;
-};
-
-struct ev_setup_opts
-{
-   bool napi;
-   bool sqpoll;
-   int sq_thread_idle; /* set to 1000 */
-   bool use_huge;
-   bool defer_tw;
-   bool snd_ring;
-   bool snd_bundle;
-   bool fixed_files;
-
-   int buf_count;
-   int buf_size;
-};
-
-#if USE_EPOLL
-
-struct ev_entry
-{
-   int event;
-   event_cb cb;
-   void * buf;
-   size_t buf_len;
-   struct epoll_event epoll_ev;
-};
-
-struct ev_config
-{
-   int flags;
-};
-
-struct ev
-{
-    atomic_bool running; /* used to kill the loop */
-
-    struct ev_config conf;
-    int id;
-
-    sigset_t sigset;
-
-    int signal_count;
-    int monitored_signals[MAX_SIGNALS];
-    struct signal_entry sig_table[MAX_SIGNALS];
-
-    void* data;  /* pointer to user defined data that can be retrieved from inside of functions */
-
-   int epoll_fd;
-   int flags;
-   int events_nr;
-   struct ev_entry ev_table[MAX_EVENTS];
-   int ev_table_imap[MAX_EVENTS];  /* inverse map: fd -> ev_table_i */
-   int signalfd;
-   };
-
-
-#else /* use io_uring */
-
-struct periodic_entry
-{
-    struct __kernel_timespec ts;
-    periodic_cb cb;
-};
-
-struct ev_config
-{
-    int entries;
-    /* startup configuration */
-    bool napi;
-    bool sqpoll;
-    bool use_huge;
-    bool defer_tw;
-    bool snd_ring;
-    bool snd_bundle;
-    bool fixed_files;
-    bool ipv6;
-    /* ring mapped buffers */
-    int buf_size;
-    int buf_count;
-    size_t buffer_ring_size;
-    struct io_uring_buf_ring* buffer_rings;
-    uint8_t* buffer_base;
-    int br_mask;
-    struct io_uring_params params;
-};
-
-struct ev
-        {
-    atomic_bool running; /* used to kill the loop */
-
-    struct ev_config conf;
-    int id;
-
-    sigset_t sigset;
-
-    int signal_count;
-    int monitored_signals[MAX_SIGNALS];
-    struct signal_entry sig_table[MAX_SIGNALS];
-
-    void* data;  /* pointer to user defined data that can be retrieved from inside of functions */
-
-    int io_count;
-    struct io_entry io_table[MAX_FDS];
-
-    uint64_t expirations;
-    int periodic_count;
-    struct periodic_entry per_table[MAX_PERIODIC];
-
-    struct io_uring ring;
-    struct io_uring_sqe* sqe;
-    struct io_uring_cqe* cqe;
-
-    int bid; /* next buffer ring id */
-    int next_out_bid;
-    struct io_buf_ring in_br;
-    struct io_buf_ring out_br;
-    /* TODO: Do iovecs ?
-      *  int iovecs_nr;
-      *  struct iovec *iovecs;
-      */
-};
 #endif
 
-int ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts);
-int ev_free(struct ev** ev_out);
-int ev_loop(struct ev* ev);
-int ev_setup(struct ev_config* conf, struct ev_setup_opts opts);
+struct ev_loop {
+   volatile bool running;
+   atomic_bool atomic_running;
+   struct ev_context ctx;
 
-int io_init(struct ev* io, int fd, int event, io_cb callback, void* buf, size_t buf_len, int bid);
-int io_stop();
-int io_accept_init(struct ev* ev,int fd,io_cb cb);
-int io_read_init(struct ev* ev,int fd,io_cb cb);
-int io_receive_init(struct ev* ev,int fd,io_cb cb);
-int io_connect_init(struct ev* ev,int fd,io_cb cb,union sockaddr_u* addr);
-int io_send_init(struct ev* ev,int fd,io_cb cb,void* buf,int buf_len,int bid);
-int io_table_insert(struct ev* ev, int fd, io_cb cb, int event);
+   struct ev_io ihead;
+   struct ev_signal shead;
+   struct ev_periodic phead;
 
-/** Creates a periodic timeout.
- * Uses io_uring_prep_timeout to create a timeout.
- * @param ev:
+   sigset_t sigset;
+
+#if USE_URING
+   struct io_uring ring;
+   struct io_buf_ring in_br;
+   struct io_buf_ring out_br;
+
+   /* TODO: Improve the usage of .bid, .next_out_bid so they can represent next buffer */
+   int bid;  /* next buffer ring id */
+
+   /* TODO: Implement iovecs.
+    *  int iovecs_nr;
+    *  struct iovec *iovecs;
+    */
+
+#else /* USE_URING */
+
+   int epollfd;
+   int signalfd;
+   void* buffer; 
+   int capacity;
+   
+#endif
+};
+
+typedef void(*io_cb)(struct ev_loop*,struct ev_io*watcher,int err);
+typedef void(*signal_cb)(struct ev_loop*,struct ev_signal*watcher,int err);
+typedef void(*periodic_cb)(struct ev_loop*,struct ev_periodic*watcher,int err);
+
+#if USE_URING
+
+int _ev_setup_context(struct ev_context*,struct ev_context);
+int _ev_setup_buffers(struct ev_loop* ev);
+
+int _ev_handler(struct ev_loop* w,struct io_uring_cqe* cqe);
+int _io_handler(struct ev_loop*,struct ev_io* w,struct io_uring_cqe* cqe, int type);
+int _send_handler(struct ev_loop*,struct ev_io* w,struct io_uring_cqe* cqe);
+int _receive_handler(struct ev_loop*,struct ev_io* w,struct io_uring_cqe* cqe,void** buf,int*,bool is_proxy);
+int _accept_handler(struct ev_loop*,struct ev_io* w,struct io_uring_cqe* cqe);
+int _connect_handler(struct ev_io* w,struct io_uring_cqe* cqe);
+int _socket_handler(struct ev_loop*,struct ev_io* w,struct io_uring_cqe* cqe,void** buf,int*);
+int _signal_handler(struct ev_loop*, int signum);
+int _periodic_handler(struct ev_loop*,struct ev_periodic* w);
+
+
+int _io_table_insert(struct ev_io* w,int fd,io_cb cb,int event);
+int _signal_table_insert(struct ev_signal* w,int signum,int slot,signal_cb cb);
+int _periodic_table_insert(struct ev_periodic* w,struct __kernel_timespec ts,periodic_cb cb);
+
+int _prepare_send(struct ev_io* w,int fd,void* buf,size_t data_len,int t_index);
+int _rearm_receive(struct ev_loop*,struct ev_io* w);
+int _replenish_buffers(struct ev_loop* ev,struct io_buf_ring* br,int bid_start,int bid_end);
+void _ev_set_out(struct ev_io*w, void*, int, int, int);
+struct io_uring_sqe* _get_sqe(struct ev_loop* ev);
+
+struct user_data _decode_user_data(struct io_uring_cqe* cqe);
+void _encode_user_data(struct io_uring_sqe* sqe,uint8_t event,uint16_t id,uint8_t bid,uint16_t fd,uint16_t ind);
+
+#else /* USE_URING */
+
+int _ev_handler(struct ev_loop* ev,void*watcher);
+int _io_handler(struct ev_loop* ev, struct ev_io* w);
+int _send_handler(struct ev_loop* ev, struct ev_io* w);
+int _accept_handler(struct ev_loop* ev, struct ev_io* w);
+int _receive_handler(struct ev_loop* ev, struct ev_io* w);
+int _connect_handler(struct ev_loop* ev, struct ev_io* w);
+int _periodic_handler(struct ev_loop*,struct ev_periodic* w);
+int _signal_handler(struct ev_loop* ev);
+
+int set_non_blocking(int fd);
+
+#endif /* USE_URING */
+
+/******************************************************************************
+ * Client interface: the rest of pgagroal's code is supposed to interface with
+ * this library through the following functions.
+ ******************************************************************************/
+
+/** This set of functions initialize, start and breaks, and destroy an event loop.
+ * @param w:
+ * @param fd:
+ * @param loop:
+ * @param addr:
+ * @param buf:
+ * @param buf_len:
+ * @param cb:
+ * @param bid:
+ * @return
+ */
+struct ev_loop* pgagroal_ev_init(struct ev_context opts);
+int pgagroal_ev_loop_destroy(struct ev_loop* loop);
+int pgagroal_ev_loop(struct ev_loop* loop);
+int pgagroal_ev_loop_break(struct ev_loop* loop);
+/** This function should be called after each fork to destroy a copied loop.
+ * @param loop: loop that should be destroyed.
+ */
+void pgagroal_ev_loop_fork(struct ev_loop* loop);
+static inline bool pgagroal_ev_loop_is_running(struct ev_loop* ev) { return ev->running; }
+static inline bool pgagroal_ev_atomic_loop_is_running(struct ev_loop* ev) { return atomic_load(&ev->atomic_running); }
+
+/** This set of functions initialize, start and stop watchers for io operations.
+ * @param w:
+ * @param fd:
+ * @param ev_loop:
+ * @param addr:
+ * @param buf:
+ * @param buf_len:
+ * @param cb:
+ * @param bid:
+ * @return
+ */
+int pgagroal_ev_io_init(struct ev_io* w,int ,int ,io_cb ,void*,int,int);
+int pgagroal_ev_io_accept_init(struct ev_io* w,int fd,io_cb cb);
+int pgagroal_ev_io_read_init(struct ev_io* w,int fd,io_cb cb);
+int pgagroal_ev_io_receive_init(struct ev_io* w,int fd,io_cb cb);
+int pgagroal_ev_io_connect_init(struct ev_io* w,int fd,io_cb cb,union sockaddr_u* addr);
+int pgagroal_io_send_init(struct ev_io* w,int fd,io_cb cb,void* buf,int buf_len,int bid);
+int pgagroal_ev_io_start(struct ev_loop* loop, struct ev_io* w);
+int pgagroal_ev_io_stop(struct ev_loop* loop, struct ev_io* w);
+
+/** This set of functions initialize, start and stop watchers for periodic timeouts.
+ * @param w:
+ * @param ev_loop:
  * @param msec:
  * @param cb:
  * @return
  */
-int periodic_init(struct ev* ev, int msec, periodic_cb cb);
-int periodic_stop();
-int periodic_handler(struct ev* ev, int t_index);
+int pgagroal_ev_periodic_init(struct ev_periodic* w,periodic_cb cb,int msec);
+int pgagroal_ev_periodic_start(struct ev_loop* loop, struct ev_periodic* w);
+int pgagroal_ev_periodic_stop(struct ev_loop* loop, struct ev_periodic* w);
 
-int signal_init(struct ev* io, int signum, signal_cb cb);
-int signal_stop();
-int signal_table_insert(struct ev* ev, int signum, signal_cb cb);
-/** Handles the triggered signals.
- * [1] *NOTE*: the io_uring implementation currently receives signum as a workaround.
- * Remember that the ideal way to deal with signals here may be through signalfd and
- * registering the signals to a table. It is cleaner and it is consistent with the rest
- * of the event handling.
+/** This set of functions initialize, start and stop watchers for io operations.
+ * @param w:
+ * @param ev_loop:
+ * @param signum:
+ * @param cb:
+ * @return
+ *
  */
-
-int set_non_blocking(int fd);
-
-#if USE_EPOLL
-
-int io_handler(struct ev* ev);
-int send_handler(struct ev* ev, int t_index);
-int receive_handler(struct ev* ev, int t_index);
-int accept_handler(struct ev* ev, int t_index);
-int connect_handler(struct ev* ev, int t_index);
-int ev_handler(struct ev* ev, int);
-int ev_table_insert(struct ev* ev, int fd, int event, event_cb cb, void* buf, size_t buf_len);
-int ev_table_remove(struct ev* ev, int ti);
-int signal_handler(struct ev* ev, int ti);
-
-#else
-
-int periodic_table_insert(struct ev* ev, struct __kernel_timespec ts, periodic_cb cb);
-int ev_handler(struct ev* ev,struct io_uring_cqe* cqe);
-int io_handler(struct ev* ev, struct io_uring_cqe* cqe);
-int send_handler(struct ev* ev, struct io_uring_cqe* cqe);
-int receive_handler(struct ev* ev, struct io_uring_cqe* cqe, void** buf, int*, bool is_proxy);
-int accept_handler(struct ev* ev, struct io_uring_cqe* cqe);
-int connect_handler(struct ev* ev, struct io_uring_cqe* cqe);
-int socket_handler(struct ev* ev, struct io_uring_cqe* cqe, void** buf, int*);
-int signal_handler(struct ev* ev, int t_index, int signum);
-void encode_user_data(struct io_uring_sqe* sqe,uint8_t event,uint16_t id,uint8_t bid,uint16_t fd,uint16_t ind);
-struct user_data decode_user_data(struct io_uring_cqe* cqe);
-struct io_uring_sqe* get_sqe(struct ev* ev);
-int rearm_receive(struct ev* ev, int fd, int t_index);
-int prepare_send(struct ev* ev, int fd, void* buf, size_t data_len, int t_index);
-int ev_setup_buffers(struct ev* ev);
-int replenish_buffers(struct ev* ev, struct io_buf_ring *br, int bid_start, int bid_end);
-
-#endif
+int pgagroal_ev_signal_init(struct ev_signal* w,signal_cb cb,int signum);
+int pgagroal_ev_signal_start(struct ev_loop* loop, struct ev_signal* w);
+int pgagroal_ev_signal_stop(struct ev_loop* loop, struct ev_signal* w);
 
 #endif /* EV_H */

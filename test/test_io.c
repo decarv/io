@@ -16,16 +16,17 @@
 
 #define MAX_LENGTH (1 << 17) /* 128 Kib */
 
-struct connection {
-    int id;
-    int server_fd;
-    int client_fd;
-    struct ev *ev;
+struct connection
+{
+   int id;
+   int server_fd;
+   int client_fd;
+   struct ev* ev;
 };
 
 static const char* server_in_port = "8800";
-static const char* proxy_in_port  = "9900";
-struct connection * server_conn;
+static const char* proxy_in_port = "9900";
+struct connection* server_conn;
 
 const int message_length = 1 << 12;
 static uint64_t recv_bytes[nr_clients] = { 0 };
@@ -129,7 +130,6 @@ prepare_in_socket(const char* port)
    return fd;
 }
 
-
 int
 server_receive_callback(void* data, int client_fd, int err, void* buf, size_t buf_len)
 {
@@ -152,7 +152,7 @@ server_receive_callback(void* data, int client_fd, int err, void* buf, size_t bu
 int
 server_accept_callback(void* data, int client_fd, int err, void* buf, size_t buf_len)
 {
-   struct connection *conn = (struct connection *)data;
+   struct connection* conn = (struct connection*)data;
 
    if (client_fd < 0)
    {
@@ -164,7 +164,7 @@ server_accept_callback(void* data, int client_fd, int err, void* buf, size_t buf
       errors++;
    }
 
-   io_receive_init(conn->ev, client_fd, server_receive_callback);
+   pgagroal_io_receive_init(conn->ev, client_fd, server_receive_callback);
 
    return 0;
 }
@@ -175,24 +175,24 @@ server_thread(void* p)
    int ret;
 
    server_conn = malloc(sizeof(struct connection));
-   ret = ev_init(&server_conn->ev, server_conn, (struct ev_setup_opts){0});
+   ret = pgagroal_ev_init(&server_conn->ev, server_conn, (struct ev_setup_opts) {0});
    if (ret)
    {
-      perror("ev_init");
+      perror("pgagroal_ev_init");
       return NULL;
    }
 
    int in_fd = prepare_in_socket(server_in_port);
-   io_accept_init(server_conn->ev, in_fd, server_accept_callback);
+   pgagroal_io_accept_init(server_conn->ev, in_fd, server_accept_callback);
 
-   ev_loop(server_conn->ev);
+   pgagroal_ev_loop(server_conn->ev);
 //   ev_free(&ev);
 
    return 0;
 }
 
 void*
-client_thread(void *p)
+client_thread(void* p)
 {
    pid_t pid;
    int socket;
@@ -219,7 +219,7 @@ client_thread(void *p)
          }
          for (int msg = 0; msg < nr_messages; msg++)
          {
-            char *snd_buf = malloc(sizeof(char) * size);
+            char* snd_buf = malloc(sizeof(char) * size);
             snd_buf[0] = (char)client;
             send(socket, snd_buf, size, 0);
             usleep(100);
@@ -237,11 +237,11 @@ client_thread(void *p)
       assert(sent_bytes[i] == recv_bytes[i]);
    }
 
-
    return 0;
 }
 
-int main(int argc, char* argv[])
+int
+main(int argc, char* argv[])
 {
    pthread_t server, proxy, client;
 

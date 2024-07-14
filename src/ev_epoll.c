@@ -2,6 +2,9 @@
  * Copyright (C) 2024 Henrique de Carvalho <decarv.henrique@gmail.com>
  */
 
+/* project */
+#include "ev.h"
+
 /* system */
 #include <sys/epoll.h>
 #include <sys/socket.h>
@@ -15,11 +18,8 @@
 #include <sys/timerfd.h>
 #include <stdatomic.h>
 
-/* project */
-#include "ev.h"
-
 int
-ev_setup(struct ev_config* conf, struct ev_setup_opts opts)
+pgagroal_ev_setup(struct ev_config* conf, struct ev_setup_opts opts)
 {
    printf("epoll ev_setup");
    conf->flags = 0;
@@ -27,7 +27,7 @@ ev_setup(struct ev_config* conf, struct ev_setup_opts opts)
 }
 
 int
-ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
+pgagroal_ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
 {
    int ret;
    int fd;
@@ -38,7 +38,7 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
       return -1;
    }
 
-   ev_setup(&ev->conf, opts);
+   pgagroal_ev_setup(&ev->conf, opts);
 
    ev->epoll_fd = epoll_create1(ev->conf.flags);
    if (ev->epoll_fd == -1)
@@ -57,7 +57,7 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
 
    /* signals use sig_table */
    sigemptyset(&ev->sigset);
-   fd = signalfd(-1,&ev->sigset,SFD_NONBLOCK);
+   fd = signalfd(-1, &ev->sigset, SFD_NONBLOCK);
    if (fd == -1)
    {
       perror("signal_init_epoll: signalfd");
@@ -65,8 +65,7 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
    }
    ev->signalfd = fd;
    event_cb nil;
-   ev_table_insert(ev, fd, SIGNAL, nil, NULL, 0);
-
+   ev_table_insert(ev, fd, SIGNAL,nil,NULL,0);
 
    ev->data = data;
 
@@ -76,25 +75,25 @@ ev_init(struct ev** ev_out, void* data, struct ev_setup_opts opts)
 }
 
 int
-io_accept_init(struct ev* ev, int fd, io_cb cb)
+pgagroal_io_accept_init(struct ev* ev,int fd,io_cb cb)
 {
-   return io_init(ev, fd, ACCEPT, cb, NULL, 0, 0);
+   return pgagroal_io_init(ev,fd,ACCEPT,cb,NULL,0,0);
 }
 
 int
-io_receive_init(struct ev* ev, int fd, io_cb cb)
+pgagroal_io_receive_init(struct ev* ev,int fd,io_cb cb)
 {
-   return io_init(ev, fd, RECEIVE, cb, NULL, 0, 0);
+   return pgagroal_io_init(ev,fd,RECEIVE,cb,NULL,0,0);
 }
 
 int
-io_send_init(struct ev* ev, int fd, io_cb cb, void* buf, int buf_len, int _rsv)
+pgagroal_io_send_init(struct ev* ev,int fd,io_cb cb,void* buf,int buf_len,int bid)
 {
-   return io_init(ev, fd, SEND, cb, buf, buf_len, 0);
+   return pgagroal_io_init(ev,fd,SEND,cb,buf,buf_len,0);
 }
 
 int
-io_init(struct ev* ev, int fd, int event, io_cb cb, void* buf, size_t buf_len, int _rsv)
+pgagroal_io_init(struct ev* io,int fd,int event,io_cb callback,void* buf,size_t buf_len,int bid)
 {
    int ret;
    int i;
@@ -102,14 +101,14 @@ io_init(struct ev* ev, int fd, int event, io_cb cb, void* buf, size_t buf_len, i
    ret = set_non_blocking(fd);
    if (ret)
    {
-      fprintf(stderr, "set_non_blocking\n");
+      fprintf(stderr,"set_non_blocking\n");
       return -1;
    }
 
-   ret = ev_table_insert(ev, fd, event, (event_cb)cb, buf, buf_len);
+   ret = ev_table_insert(io,fd,event,(event_cb)callback,buf,buf_len);
    if (ret)
    {
-      fprintf(stdout, "io_init: ev_table_insert\n");
+      fprintf(stdout,"io_init: ev_table_insert\n");
       return ERROR;
    }
 
@@ -117,14 +116,14 @@ io_init(struct ev* ev, int fd, int event, io_cb cb, void* buf, size_t buf_len, i
 }
 
 int
-ev_loop(struct ev* ev)
+pgagroal_ev_loop(struct ev* ev)
 {
    int ret;
    struct epoll_event events[MAX_EVENTS];
    ev->running = true;
    while (atomic_load(&ev->running))
    {
-      int nfds = epoll_wait(ev->epoll_fd, events, MAX_EVENTS, 100);
+      int nfds = epoll_wait(ev->epoll_fd,events,MAX_EVENTS,100);
       if (nfds == -1)
       {
          perror("epoll_wait");
@@ -132,10 +131,10 @@ ev_loop(struct ev* ev)
       }
       for (int i = 0; i < nfds; i++)
       {
-         ret = ev_handler(ev, events[i].data.fd);
+         ret = ev_handler(ev,events[i].data.fd);
          if (ret)
          {
-            fprintf(stderr, "ev_handler\n");
+            fprintf(stderr,"ev_handler\n");
             return ERROR;
          }
       }
@@ -144,7 +143,7 @@ ev_loop(struct ev* ev)
 }
 
 int
-ev_handler(struct ev* ev, int fd)
+ev_handler(struct ev* ev,int fd)
 {
    int ret;
    int ti;
@@ -152,7 +151,7 @@ ev_handler(struct ev* ev, int fd)
 
    if (fd == ev->signalfd)
    {
-      ret = signal_handler(ev, fd);
+      ret = signal_handler(ev,fd);
    }
    else
    {
@@ -163,16 +162,16 @@ ev_handler(struct ev* ev, int fd)
       switch (event)
       {
          case ACCEPT:
-            ret = accept_handler(ev, ti);
+            ret = accept_handler(ev,ti);
             break;
          case SEND:
-            ret = send_handler(ev, ti);
+            ret = send_handler(ev,ti);
             break;
          case RECEIVE:
-            ret = receive_handler(ev, ti);
+            ret = receive_handler(ev,ti);
             break;
          case PERIODIC:
-            ret = periodic_handler(ev,ti);
+            ret = pgagroal_periodic_handler(ev,ti);
             break;
          default:
             return 1;
@@ -226,7 +225,7 @@ receive_handler(struct ev* ev,int ti)
    int total_recv = 0;
    int capacity = MISC_LENGTH;
    int fd = ev->ev_table[ti].epoll_ev.data.fd;
-   void * buf = malloc(sizeof(char) * capacity);
+   void* buf = malloc(sizeof(char) * capacity);
    if (!buf)
    {
       perror("Failed to allocate memory");
@@ -257,7 +256,7 @@ receive_handler(struct ev* ev,int ti)
          {
             new_capacity = MAX_BUF_LEN;
          }
-         char *new_buf = realloc(buf, new_capacity);
+         char* new_buf = realloc(buf,new_capacity);
          if (!new_buf)
          {
             perror("Failed to reallocate memory");
@@ -315,35 +314,35 @@ send_handler(struct ev* ev,int ti)
    }
    if (total_sent < buf_len)
    {
-      io_send_init(ev,fd,ev->ev_table[ti].cb.io,buf + total_sent,buf_len - total_sent,0);
+      pgagroal_io_send_init(ev,fd,ev->ev_table[ti].cb.io,buf + total_sent,buf_len - total_sent,0);
    }
 
    return 0;
 }
 
 int
-signal_init(struct ev* ev,int signum,signal_cb cb)
+pgagroal_signal_init(struct ev* io,int signum,signal_cb cb)
 {
    int ret;
    int fd;
 
-   sigaddset(&ev->sigset,signum);
+   sigaddset(&io->sigset,signum);
 
-   ret = sigprocmask(SIG_BLOCK,&ev->sigset,NULL);
+   ret = sigprocmask(SIG_BLOCK,&io->sigset,NULL);
    if (ret == -1)
    {
       perror("signal_init_epoll: sigprocmask");
       return -1;
    }
 
-   fd = signalfd(ev->signalfd,&ev->sigset,SFD_NONBLOCK);
+   fd = signalfd(io->signalfd,&io->sigset,SFD_NONBLOCK);
    if (fd == -1)
    {
       perror("signal_init_epoll: signalfd");
       return ERROR;
    }
 
-   ret = signal_table_insert(ev,signum,cb);
+   ret = pgagroal_signal_table_insert(io,signum,cb);
    if (ret)
    {
       fprintf(stdout,"signal_init_epoll: ev_table_insert\n");
@@ -355,7 +354,7 @@ signal_init(struct ev* ev,int signum,signal_cb cb)
 }
 
 int
-signal_table_insert(struct ev* ev,int signum,signal_cb cb)
+pgagroal_signal_table_insert(struct ev* ev,int signum,signal_cb cb)
 {
    switch (signum)
    {
@@ -391,11 +390,12 @@ signal_table_insert(struct ev* ev,int signum,signal_cb cb)
 }
 
 int
-signal_handler(struct ev* ev,int sfd) {
+signal_handler(struct ev* ev,int sfd)
+{
    int ret;
    struct signalfd_siginfo info;
 
-   ret = read(sfd, &info, sizeof(info));
+   ret = read(sfd,&info,sizeof(info));
    if (ret != sizeof(info))
    {
       perror("signal_handler: read");
@@ -405,27 +405,28 @@ signal_handler(struct ev* ev,int sfd) {
    int signum = info.ssi_signo;
    if (signum >= 0)
    {
-      switch (signum) {
+      switch (signum)
+      {
          case SIGTERM:
-            ev->sig_table[_SIGTERM].cb(ev->data, 0);
+            ev->sig_table[_SIGTERM].cb(ev->data,0);
             break;
          case SIGHUP:
-            ev->sig_table[_SIGHUP].cb(ev->data, 0);
+            ev->sig_table[_SIGHUP].cb(ev->data,0);
             break;
          case SIGINT:
-            ev->sig_table[_SIGINT].cb(ev->data, 0);
+            ev->sig_table[_SIGINT].cb(ev->data,0);
             break;
          case SIGTRAP:
-            ev->sig_table[_SIGTRAP].cb(ev->data, 0);
+            ev->sig_table[_SIGTRAP].cb(ev->data,0);
             break;
          case SIGABRT:
-            ev->sig_table[_SIGABRT].cb(ev->data, 0);
+            ev->sig_table[_SIGABRT].cb(ev->data,0);
             break;
          case SIGALRM:
-            ev->sig_table[_SIGALRM].cb(ev->data, 0);
+            ev->sig_table[_SIGALRM].cb(ev->data,0);
             break;
          default:
-            fprintf(stderr, "signal not supported\n");
+            fprintf(stderr,"signal not supported\n");
             return 1;
       }
    }
@@ -518,12 +519,11 @@ ev_table_remove(struct ev* ev,int ti)
       return 1;
    }
 
-
    return 0;
 }
 
 int
-periodic_init(struct ev* ev,int msec,periodic_cb cb)
+pgagroal_periodic_init(struct ev* ev,int msec,periodic_cb cb)
 {
    int ret;
    int fd;
@@ -577,23 +577,23 @@ periodic_init(struct ev* ev,int msec,periodic_cb cb)
 }
 
 int
-periodic_handler(struct ev* ev,int ti)
+pgagroal_periodic_handler(struct ev* ev,int t_index)
 {
    struct ev_entry* table = ev->ev_table;
    uint64_t exp;
-   int fd = table[ti].epoll_ev.data.fd;
+   int fd = table[t_index].epoll_ev.data.fd;
    int nread = read(fd,&exp,sizeof(uint64_t));
    if (nread != sizeof(uint64_t))
    {
       perror("periodic_handler: read");
       return ERROR;
    }
-   table[ti].cb.signal(ev->data,0);
+   table[t_index].cb.signal(ev->data,0);
    return OK;
 }
 
 int
-ev_free(struct ev** ev_out)
+pgagroal_ev_free(struct ev** ev_out)
 {
    if (ev_out == NULL || *ev_out == NULL)
    {
